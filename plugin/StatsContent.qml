@@ -443,8 +443,8 @@ Column {
         Rectangle {
           id: creature
           required property var modelData
-          width: Style.space(38)
-          height: Style.space(26)
+          width: Style.space(30)
+          height: Style.space(22)
           radius: Style.space(8)
           color: modelData.found ? col.tint(col.accent, 0.18) : col.tint(col.fg, 0.06)
           Text {
@@ -505,7 +505,7 @@ Column {
           id: badge
           required property var modelData
           width: badges.cell
-          height: Style.space(56)
+          height: Style.space(50)
           radius: Style.space(8)
           color: modelData.unlocked ? col.tint(col.gold, 0.16) : col.tint(col.fg, 0.06)
           border.width: modelData.unlocked ? 1 : 0

@@ -74,11 +74,20 @@ BarWidget {
 
   // The Abyss binary rewrites these on every save; the shell only watches, never polls.
   FileView {
+    id: statsFile
     path: root.stateDir + "/stats.json"
     watchChanges: true
     printErrors: false
     onLoaded: { try { root.stats = JSON.parse(text()) } catch (e) {} }
     onFileChanged: reload()
+  }
+
+  // A file that does not exist yet (before the first run) cannot be watched: poll until it appears.
+  Timer {
+    interval: 3000
+    repeat: true
+    running: root.stats === null
+    onTriggered: statsFile.reload()
   }
 
   // `abyss mode|quality` write this file; the panel switches only ask the CLI and follow the file.
