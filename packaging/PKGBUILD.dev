@@ -12,7 +12,7 @@ makedepends=(cargo)
 optdepends=('foot: terminal used by the Omarchy screensaver'
             'ttfx: intro and exit summary animation (ships with Omarchy)'
             'grim: scripts/e2e-idle.sh screenshots')
-options=(!lto) # the release profile already sets lto = "thin"
+options=(!lto !debug) # the release profile already sets lto = "thin"
 install=omarchy-abyss.install
 
 _src="$startdir/.."
