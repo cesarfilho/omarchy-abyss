@@ -7,7 +7,7 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -15,7 +15,7 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
       - run: cargo build --release --locked
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: abyss-linux-x86_64
           path: target/release/abyss
@@ -23,11 +23,12 @@ jobs:
   scripts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y shellcheck jq
       - run: shellcheck -S warning install.sh uninstall.sh scripts/* plugin/abyss-launch plugin/abyss-screensaver
       - name: abyss-setup round trip in a throw-away HOME
         run: |
+          unset XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME
           export HOME=$(mktemp -d) ABYSS_DATA=$PWD
           mkdir -p "$HOME/.config/omarchy"
           echo '{"idle":{"lock":1800,"screensaver":300}}' > "$HOME/.config/omarchy/shell.json"
