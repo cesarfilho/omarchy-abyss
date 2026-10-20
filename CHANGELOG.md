@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- The repository root is now the Omarchy plugin (`manifest.json` and the QML at the root, launchers in `bin/`), so it can be added with `omarchy plugin add` and listed on the Omarchy marketplace; `omarchy plugin validate .` passes.
+- The panel tells you when the `abyss` program is not installed yet.
+- README rewritten for marketplace installs (install, what `abyss-setup enable` changes, removal), with animated GIFs and a panel screenshot; `scripts/make-gifs.py` re-renders them; `preview.png` for the listing.
+
 ## 0.3.0
 
 - Fish swim in random directions: every school and loner has its own wandering route (periodic over 30 minutes, a pure function of the clock), followers trail their leader, and sprites tilt nose-up or nose-down with the heading.

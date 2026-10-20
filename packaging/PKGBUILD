@@ -1,6 +1,6 @@
 # Maintainer: Cesar Roberto Pamplona Filho <cesarpamplonafilho@gmail.com>
 pkgname=omarchy-abyss
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc='Gamified deep-sea screensaver for Omarchy: pixel-art ocean, XP, trophies, bestiary, shell plugin'
 arch=(x86_64 aarch64)
