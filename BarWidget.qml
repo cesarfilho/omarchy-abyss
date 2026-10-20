@@ -24,10 +24,8 @@ BarWidget {
   readonly property color accent: stats ? zoneColors[Math.min(5, stats.zone)] : zoneColors[0]
 
   function close() { opened = false }
-  function toggle() {
-    opened = !opened
-    if (opened) probe.running = true
-  }
+  function toggle() { opened = !opened }
+  onOpenedChanged: if (opened) probe.running = true
 
   function setMode(next) {
     root.mode = next
