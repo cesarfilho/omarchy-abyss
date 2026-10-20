@@ -45,7 +45,7 @@ pub fn upstream_launcher() -> Option<PathBuf> {
 }
 
 pub fn upstream_record() -> PathBuf {
-    state::state_dir().join("upstream.sha256")
+    crate::config::config_dir().join("upstream.sha256")
 }
 
 fn json_at(path: &Path) -> Option<serde_json::Value> {
