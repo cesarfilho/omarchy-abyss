@@ -77,6 +77,16 @@ pub const BESTIARY: &[Creature] = &[
     Creature { id: "jelly", name: "Água-viva", desc: "Pulsa em silêncio no crepúsculo", zones: (2, 5) },
     Creature { id: "shark", name: "Tubarão", desc: "Patrulha o mar aberto; os cardumes se abrem à sua passagem", zones: (0, 3) },
     Creature { id: "whale", name: "Baleia", desc: "Cruza o mar a cada poucos minutos", zones: (0, 3) },
+    Creature { id: "wreck", name: "Veleiro naufragado", desc: "Madeira, algas e um mastro partido", zones: (0, 3) },
+    Creature { id: "anchor", name: "Âncora e corrente", desc: "Ferro enferrujado na areia", zones: (0, 3) },
+    Creature { id: "treasure", name: "Baú do tesouro", desc: "Ainda brilha, depois de tanto tempo", zones: (0, 2) },
+    Creature { id: "amphorae", name: "Ânforas antigas", desc: "Cerâmica de uma carga perdida", zones: (1, 2) },
+    Creature { id: "ruins", name: "Ruínas submersas", desc: "Colunas de um templo engolido pelo mar", zones: (1, 3) },
+    Creature { id: "sub", name: "Submarino afundado", desc: "Ainda solta bolhas pela escotilha", zones: (2, 3) },
+    Creature { id: "plane", name: "Avião naufragado", desc: "Uma asa só e a hélice torta", zones: (2, 4) },
+    Creature { id: "whalefall", name: "Esqueleto de baleia", desc: "Um banquete lento para o fundo do mar", zones: (3, 5) },
+    Creature { id: "titanic", name: "Transatlântico partido", desc: "Proa e popa separadas por um campo de destroços", zones: (4, 5) },
+    Creature { id: "vents", name: "Fumarolas hidrotermais", desc: "Chaminés quentes cercadas de vermes-tubo", zones: (5, 5) },
     Creature { id: "bloom", name: "Maré bioluminescente", desc: "Plâncton que brilha à noite e no fundo", zones: (0, 5) },
 ];
 

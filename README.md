@@ -8,17 +8,22 @@ A gamified deep-sea screensaver for [Omarchy](https://omarchy.org/). A pixel-art
 
 ![Shallow reef](docs/screenshots/shallow.png)
 
-| Deep sea | Seasonal event |
+| A shark passes | A shipwreck |
 |---|---|
-| ![Abyssal zone](docs/screenshots/deep.png) | ![Christmas lights](docs/screenshots/events.png) |
+| ![Shark](docs/screenshots/shark.png) | ![Wreck](docs/screenshots/wreck.png) |
+
+| The liner, 3,800 m down | Christmas lights |
+|---|---|
+| ![Titanic](docs/screenshots/titanic.png) | ![Christmas](docs/screenshots/events.png) |
 
 ## What it does
 
-- **A living ocean.** Six species of fish (clownfish, blue tang, sardines, lanternfish, vipers, anglers), jellyfish, whales, bubbles, marine snow and bioluminescent blooms, all drawn procedurally with shading, fins, eyes and patterns.
-- **2.5D.** Five parallax seabed planes, creatures swimming at different depths (far ones are smaller and hazier), shadows on the sand, rocks and kelp in front.
+- **A living ocean.** Six species of fish (clownfish, blue tang, sardines, lanternfish, vipers, anglers), jellyfish, whales, a **shark** whose body bends as it turns and that makes schools part around it, bubbles, marine snow and bioluminescent blooms, all drawn procedurally. Every school and loner picks its own heading and wanders; followers trail their leader, and fish tilt nose-up or nose-down as they climb or dive.
+- **2.5D, and a seabed worth looking at.** Five parallax planes; kelp forests, seagrass, rocks, sea fans, anemones, starfish, urchins and crabs in the shallows, tube worms and glowing sea pens in the deep; rippled sand with caustics and a rippling surface; creatures at different depths (far ones are smaller and hazier).
+- **Things on the sea floor.** Shipwreck, submarine, plane, Greek ruins, anchor, treasure chest, amphorae, a whale skeleton, hydrothermal vents and, in the abyssal zone, a broken ocean liner. Each one is a discovery.
 - **Several monitors, one sea.** The monitors form a single panorama: a fish that leaves one screen enters the next.
 - **Progression.** Every idle minute earns XP. Levels take you down through six zones (Surface, Sunlight, Twilight, Midnight, Abyssal, Hadal) that unlock new species. The reef grows while you are away and wilts if you stay away for days.
-- **Bestiary.** Nine creatures to discover; the first sighting of each is a banner and points.
+- **Bestiary.** Twenty creatures and sights to discover; the first sighting of each is a banner and points.
 - **Daily quests.** Three new quests every day (spend time at sea, see a whale, discover a creature, level up…).
 - **22 trophies**, streaks and points. Every achievement is a banner over the scene on every monitor; waking the computer shows a summary of what happened.
 - **Seasonal events** with 1.5× XP: Jellyfish Night (Oct 24 – Nov 2), Christmas Lights (Dec 20 – Jan 2), Oceans Week (Jun 5–12).

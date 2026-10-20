@@ -29,7 +29,7 @@ uso:
   abyss stop                               encerra o screensaver sem resumo
   abyss doctor [--fix]                     confere a instalação (e limpa restos de uma falha)
   abyss config                             mostra a configuração (~/.config/abyss/config.json)
-  abyss snapshot [zona 0-5] [reef 0-30] [--ppm ARQ] [--t SEG] [--size LxA] [--season ID]
+  abyss snapshot [zona 0-5] [reef 0-30] [--ppm ARQ] [--t SEG] [--size LxA] [--season ID] [--landmark ID]
                                            desenha um quadro (ANSI, ou imagem PPM sem tocar a tela)";
 
 fn status_json() {
@@ -125,6 +125,9 @@ fn snapshot(args: &[String]) {
     let mut world = world::World::new(w, h, world::Layout::single(w), zone, reef, false).at(t);
     world.set_palette(theme::Palette::classic());
     world.set_season(season);
+    if let Some(id) = opt("--landmark") {
+        world.force_landmark(&id);
+    }
     world.update(0.0, zone, reef, false);
     let mut frame = Frame::new(w, h);
     world.draw(&mut frame);

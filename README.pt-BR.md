@@ -8,17 +8,22 @@ Screensaver gamificado do fundo do mar para o [Omarchy](https://omarchy.org/). U
 
 ![Recife raso](docs/screenshots/shallow.png)
 
-| Mar profundo | Evento de temporada |
+| Um tubarão passa | Um naufrágio |
 |---|---|
-| ![Zona abissal](docs/screenshots/deep.png) | ![Luzes do Natal](docs/screenshots/events.png) |
+| ![Tubarão](docs/screenshots/shark.png) | ![Naufrágio](docs/screenshots/wreck.png) |
+
+| O transatlântico, a 3.800 m | Luzes do Natal |
+|---|---|
+| ![Titanic](docs/screenshots/titanic.png) | ![Natal](docs/screenshots/events.png) |
 
 ## O que ele faz
 
-- **Oceano vivo:** seis espécies (peixe-palhaço, cirurgião-azul, sardinha, peixe-lanterna, peixe-víbora, tamboril), águas-vivas, baleias, bolhas, neve marinha e marés bioluminescentes, tudo desenhado proceduralmente.
-- **2,5D:** cinco planos de paralaxe no fundo, criaturas em profundidades diferentes (as distantes ficam menores e mais enevoadas), sombras na areia, rochas e algas no primeiro plano.
+- **Oceano vivo:** seis espécies (peixe-palhaço, cirurgião-azul, sardinha, peixe-lanterna, peixe-víbora, tamboril), águas-vivas, baleias, um **tubarão** de corpo articulado que faz os cardumes se abrirem à sua passagem, bolhas, neve marinha e marés bioluminescentes, tudo desenhado proceduralmente. Cada cardume ou peixe solitário escolhe o próprio rumo e passeia; os seguidores vão na trilha do líder e os peixes inclinam o focinho ao subir ou descer.
+- **2,5D e um fundo que vale olhar:** cinco planos de paralaxe; floresta de algas, capim-marinho, rochas, leques-do-mar, anêmonas, estrelas, ouriços e caranguejos nas águas rasas, vermes-tubo e penas-do-mar brilhantes no fundo; areia ondulada com cáusticas e uma superfície que ondula; criaturas em profundidades diferentes (as distantes ficam menores e mais enevoadas).
+- **O que repousa no fundo:** veleiro naufragado, submarino, avião, ruínas gregas, âncora, baú do tesouro, ânforas, esqueleto de baleia, fumarolas hidrotermais e, na zona abissal, um transatlântico partido ao meio. Cada um é uma descoberta.
 - **Vários monitores, um só mar:** os monitores formam um único panorama; o peixe que sai de uma tela entra na outra.
 - **Progressão:** cada minuto ocioso rende XP. Subir de nível aprofunda o mar por seis zonas (Superfície, Zona de Luz, Crepúsculo, Meia-noite, Abissal, Hadal), que liberam espécies. O recife cresce enquanto você está fora e murcha se você sumir por dias.
-- **Bestiário:** nove criaturas para descobrir; o primeiro avistamento de cada uma rende um aviso e pontos.
+- **Bestiário:** vinte criaturas e paisagens para descobrir; o primeiro avistamento de cada uma rende um aviso e pontos.
 - **Missões diárias:** três missões novas por dia (tempo no mar, ver uma baleia, descobrir uma criatura, subir de nível…).
 - **22 troféus**, série de dias e pontos. Cada conquista aparece como aviso sobre a cena em todos os monitores; ao acordar, um resumo mostra o que aconteceu.
 - **Eventos de temporada** com XP ×1,5: Noite das Águas-vivas (24/10 a 2/11), Luzes do Natal (20/12 a 2/1) e Semana do Oceano (5 a 12/6).

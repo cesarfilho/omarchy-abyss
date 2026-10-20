@@ -1,3 +1,4 @@
+mod landmarks;
 mod scenery;
 
 use crate::gfx::{Frame, Rgb, lerp};
@@ -172,6 +173,8 @@ pub struct World {
     fishes: Vec<Fish>,
     paths: Vec<Path>,
     shark: Option<SharkRun>,
+    /// Snapshot/test aid: show this landmark (index into `KINDS`) on every candidate spot.
+    force_landmark: Option<usize>,
     shark_key: Option<(u64, usize, usize, bool)>,
     bubbles: Vec<Bubble>,
     snow: Vec<Snow>,
@@ -207,6 +210,7 @@ impl World {
             fishes: Vec::new(),
             paths: Vec::new(),
             shark: None,
+            force_landmark: None,
             shark_key: None,
             bubbles: Vec::new(),
             snow: Vec::new(),
@@ -252,6 +256,11 @@ impl World {
         }
         self.shark_key = Some(key);
         self.shark = if self.tz <= 3 { SharkRun::plan(self.tt, self.pano, self.h as f32, self.refw, self.unit()) } else { None };
+    }
+
+    /// Shows one landmark kind on every spot (used by `abyss snapshot --landmark`).
+    pub fn force_landmark(&mut self, id: &str) {
+        self.force_landmark = landmarks::KINDS.iter().position(|k| k.0 == id);
     }
 
     pub fn set_palette(&mut self, pal: Palette) {
@@ -437,6 +446,7 @@ impl World {
         if self.bloom_level() > 0.35 {
             spotted.push("bloom");
         }
+        spotted.extend(self.landmarks_in_view());
         if self.shark.as_ref().is_some_and(|s| s.envelope(self.tt) > 0.2) {
             spotted.push("shark");
         }
@@ -518,6 +528,7 @@ impl World {
             let floor = self.floor_row(slot);
             self.draw_seabed(f, slot, bot, &floor);
             self.draw_scenery(f, slot, bot, &floor);
+            self.draw_landmarks(f, slot, bot);
             if slot <= 1 {
                 self.draw_corals(f, bot, slot);
             }
@@ -617,8 +628,8 @@ impl World {
     fn draw_seabed(&self, f: &mut Frame, slot: usize, bot: Rgb, floor: &[f32]) {
         let color = lerp(bot, self.sand(), PLANES[slot].5);
         let edge = lerp(color, [255, 255, 255], 0.12);
-        for x in 0..self.w {
-            let fy = floor[x] as i32;
+        for (x, &fy) in floor.iter().enumerate() {
+            let fy = fy as i32;
             for y in fy.max(0)..self.h as i32 {
                 f.set(x as i32, y, if y == fy && slot == 0 { edge } else { color });
             }
@@ -1078,6 +1089,63 @@ mod tests {
     }
 
     #[test]
+    fn every_landmark_is_a_bestiary_entry_and_only_appears_in_its_zones() {
+        for (id, weights, size) in landmarks::KINDS {
+            let c = crate::state::creature(id).unwrap_or_else(|| panic!("{id} missing from the bestiary"));
+            assert!(size > 0.0);
+            for (zone, w) in weights.iter().enumerate() {
+                assert_eq!(*w > 0, (c.zones.0..=c.zones.1).contains(&zone), "{id} zone {zone}: weight {w} vs bestiary {:?}", c.zones);
+            }
+        }
+    }
+
+    #[test]
+    fn every_landmark_draws_inside_the_frame_at_any_time() {
+        for (id, _, _) in landmarks::KINDS {
+            for (zone, t) in [(2.0, 1_700_000_500.0), (4.5, 1_711_111_111.0), (5.5, 1_722_222_222.0)] {
+                for off in [0usize, 200] {
+                    let mut w = World::new(200, 120, Layout { pano_w: 400, off }, zone, 4, false).at(t);
+                    w.force_landmark(id);
+                    let mut f = Frame::new(200, 120);
+                    w.draw(&mut f); // must not panic, whatever sticks out of the frame
+                    assert_eq!(f.w, 200);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_landmark_in_view_is_announced_once() {
+        let mut w = World::new(640, 360, Layout::single(640), 2.0, 5, false).at(T);
+        w.force_landmark("ruins");
+        assert!(w.landmarks_in_view().contains(&"ruins"));
+        let seen = |w: &mut World| w.update(0.03, 2.0, 5, false).iter().filter(|e| **e == WorldEvent::Spotted("ruins")).count();
+        assert_eq!(seen(&mut w), 1);
+        assert_eq!(seen(&mut w), 0);
+    }
+
+    #[test]
+    fn seabed_life_matches_the_depth() {
+        use scenery::hf;
+        let kinds = |zone: usize| -> Vec<usize> { (0..400).map(|i| scenery::pick_for_test(zone, true, hf(1, i))).collect() };
+        assert!(kinds(0).iter().all(|k| *k != 8 && *k != 9), "no tube worms or sea pens in the sunlight");
+        assert!(kinds(5).iter().all(|k| !matches!(*k, 1 | 2 | 3 | 4 | 5 | 7)), "only rocks, urchins, worms and pens in the hadal trench");
+        assert!(kinds(0).contains(&2) && kinds(3).contains(&9));
+        let v: Vec<f32> = (0..1000).map(|i| hf(3, i)).collect();
+        assert!(v.iter().all(|x| (0.0..1.0).contains(x)) && v.iter().sum::<f32>() / 1000.0 > 0.4);
+    }
+
+    #[test]
+    fn the_first_level_is_not_a_bare_seabed() {
+        // No reef yet (level 0): there must still be plants, rocks and critters in the lowest part of the frame.
+        let w = World::new(320, 180, Layout::single(320), 0.3, 0, false).at(T);
+        let mut f = Frame::new(320, 180);
+        w.draw(&mut f);
+        let distinct: std::collections::HashSet<Rgb> = (100..180).flat_map(|y| (0..320).map(move |x| (x, y))).map(|(x, y)| f.at(x, y)).collect();
+        assert!(distinct.len() > 60, "{} distinct colours in the bottom strip", distinct.len());
+    }
+
+    #[test]
     fn seasons_change_the_scene() {
         let plain = frame_of(160, 90, Layout::single(160), 1.0);
         let mut w = World::new(160, 90, Layout::single(160), 1.0, 10, false).at(T);
@@ -1124,8 +1192,8 @@ mod bench {
         t!("bubbles", { world.draw_bubbles(&mut f, true); world.draw_bubbles(&mut f, false) });
         let rows: Vec<Vec<f32>> = (0..5).map(|s| world.floor_row(s)).collect();
         t!("floor_row", for s in 0..5 { world.floor_row(s); });
-        t!("seabed", for s in 0..5 { world.draw_seabed(&mut f, s, bot, &rows[s]) });
-        t!("ground", for s in 0..5 { world.draw_ground_texture(&mut f, s, bot, &rows[s]) });
+        t!("seabed", for (s, r) in rows.iter().enumerate() { world.draw_seabed(&mut f, s, bot, r) });
+        t!("ground", for (s, r) in rows.iter().enumerate() { world.draw_ground_texture(&mut f, s, bot, r) });
         t!("props", for s in 0..5 { world.draw_props(&mut f, s, bot) });
         t!("surface", world.draw_surface(&mut f));
         t!("farfish", world.draw_far_schools(&mut f, bot));

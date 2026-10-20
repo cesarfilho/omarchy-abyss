@@ -62,7 +62,7 @@ pub(super) fn poly(f: &mut Frame, pts: &[(f32, f32)], c: Rgb) {
             }
         }
         xs.sort_by(|p, q| p.total_cmp(q));
-        for pair in xs.chunks_exact(2) {
+        for pair in xs.chunks(2).filter(|p| p.len() == 2) {
             for x in pair[0].round() as i32..pair[1].round() as i32 {
                 f.set(x, y, c);
             }
@@ -109,10 +109,10 @@ const WEIGHTS: [[u32; 10]; 6] = [
 
 fn pick(zone: usize, small_ok: bool, r: f32) -> usize {
     let w = WEIGHTS[zone.min(5)];
-    let total: u32 = w.iter().enumerate().map(|(i, v)| if !small_ok && matches!(i, 4 | 5 | 6) { 0 } else { *v }).sum();
+    let total: u32 = w.iter().enumerate().map(|(i, v)| if !small_ok && matches!(i, 4..=6) { 0 } else { *v }).sum();
     let mut k = (r * total as f32) as u32;
     for (i, v) in w.iter().enumerate() {
-        let v = if !small_ok && matches!(i, 4 | 5 | 6) { 0 } else { *v };
+        let v = if !small_ok && matches!(i, 4..=6) { 0 } else { *v };
         if k < v {
             return i;
         }
@@ -121,11 +121,17 @@ fn pick(zone: usize, small_ok: bool, r: f32) -> usize {
     0
 }
 
+#[cfg(test)]
+pub(super) fn pick_for_test(zone: usize, small_ok: bool, r: f32) -> usize {
+    pick(zone, small_ok, r)
+}
+
 impl World {
     /// Props, ground texture and light for one seabed plane (called right after `draw_seabed`).
     pub(super) fn draw_scenery(&self, f: &mut Frame, slot: usize, bot: Rgb, floor: &[f32]) {
         self.draw_ground_texture(f, slot, bot, floor);
         self.draw_props(f, slot, bot);
+        self.draw_crabs(f, slot, bot);
     }
 
     /// Floor height of a plane for every screen column (computed once per plane and frame).
@@ -221,7 +227,7 @@ impl World {
         let h = (22.0 + 26.0 * a) * s.u;
         let stalk = s.col(lerp([88, 96, 40], [60, 80, 56], (self.zf / 2.5).min(1.0)));
         let leaf = s.col(lerp([128, 140, 52], [86, 124, 78], (self.zf / 2.5).min(1.0)));
-        let sway = |q: f32| (s.t * 0.7 + b * 6.28 + q * 3.0).sin() * 5.0 * s.u * 0.5 * q * q;
+        let sway = |q: f32| (s.t * 0.7 + b * std::f32::consts::TAU + q * 3.0).sin() * 5.0 * s.u * 0.5 * q * q;
         let mut prev = (s.x, s.base);
         for j in 1..=(h as i32 / 3) {
             let q = (j * 3) as f32 / h;
@@ -284,7 +290,7 @@ impl World {
         let r = (1.8 + 1.4 * a) * s.u;
         let c = s.col(if b < 0.5 { [232, 110, 50] } else { [200, 60, 70] });
         let (cx, cy) = (s.x, s.base - r * 0.3);
-        let rot = b * 6.28;
+        let rot = b * std::f32::consts::TAU;
         for k in 0..5 {
             let ang = rot + k as f32 * 1.2566;
             let tip = (cx + ang.cos() * r, cy + ang.sin() * r * 0.4);
@@ -299,7 +305,7 @@ impl World {
         let c = s.col([60, 34, 86]);
         let (cx, cy) = (s.x, s.base - r);
         for k in 0..16 {
-            let ang = k as f32 * 0.3927 - 1.57;
+            let ang = k as f32 * std::f32::consts::FRAC_PI_8 - std::f32::consts::FRAC_PI_2;
             if ang.sin() > 0.4 {
                 continue;
             }
@@ -318,7 +324,7 @@ impl World {
         }
     }
 
-    fn prop_tubeworms(&self, f: &mut Frame, s: &Spot, a: f32, b: f32) {
+    pub(super) fn prop_tubeworms(&self, f: &mut Frame, s: &Spot, a: f32, b: f32) {
         let n = 5 + (b * 4.0) as i32;
         for k in 0..n {
             let x = s.x + (k as f32 - n as f32 / 2.0) * s.u * 0.55;
@@ -351,6 +357,61 @@ impl World {
         f.dot((s.x + sway) as i32 - 1, (s.base - h) as i32 - 2, s.sc + 1, [150, 255, 230], 1.0);
     }
 
+    /// Crabs scuttling sideways along the sand of the two nearest planes (shallow zones).
+    pub(super) fn draw_crabs(&self, f: &mut Frame, slot: usize, bot: Rgb) {
+        if slot > 1 || self.tz > 2 {
+            return;
+        }
+        let z = slot as f32 / 4.0;
+        let cs = scale_z(z);
+        let unit = self.unit() as f64;
+        let u = self.unit() * cs;
+        let period = self.pano as f64 + 90.0 * unit;
+        let speed = PLANES[slot].4 as f64;
+        let sc = ((self.px_scale as f32 * cs).round() as i32).max(1);
+        for i in 0..2u64 {
+            let seed = 70_000 + slot as u64 * 10 + i;
+            let wx = (i as f64 * 0.5 + 0.1 + 0.4 * hf(seed, 1) as f64) * period;
+            // Walks back and forth over a stretch of sand, pausing at each end.
+            let phase = self.tt * 0.09 + hf(seed, 2) as f64 * std::f64::consts::TAU;
+            let walk = (phase.sin() * 1.6).clamp(-1.0, 1.0) * 22.0 * unit;
+            let facing = if phase.cos() >= 0.0 { 1.0f32 } else { -1.0 };
+            let moving = (phase.sin() * 1.6).abs() < 1.0;
+            let sx = ((wx - self.cam64() * speed + walk).rem_euclid(period) - 45.0 * unit - self.off as f64) as f32;
+            if sx < -20.0 * u || sx > self.w as f32 + 20.0 * u {
+                continue;
+            }
+            let base = self.floor_y(slot, sx.clamp(0.0, self.w as f32 - 1.0)) + 1.0;
+            let fog = self.fog_z(z);
+            let col = |c: Rgb| lerp(c, bot, fog);
+            let body = col([210, 84, 52]);
+            let dark = col([140, 50, 36]);
+            let (cx, cy) = (sx, base - 1.3 * u);
+            // legs, three per side, alternating while walking
+            for k in 0..3 {
+                for sgn in [-1.0f32, 1.0] {
+                    let step = if moving { (self.t * 9.0 + k as f32 * 2.1 + if sgn > 0.0 { std::f32::consts::PI } else { 0.0 }).sin() } else { 0.0 };
+                    let root = (cx + sgn * (0.7 + 0.5 * k as f32) * u * 0.7, cy + 0.2 * u);
+                    let foot = (root.0 + sgn * (1.3 + step * 0.5) * u * 0.7, base - step.max(0.0) * 0.5 * u * 0.4);
+                    thick(f, root, (root.0 + sgn * 0.8 * u * 0.7, root.1 - 0.5 * u * 0.4), sc, dark);
+                    thick(f, (root.0 + sgn * 0.8 * u * 0.7, root.1 - 0.5 * u * 0.4), foot, sc, dark);
+                }
+            }
+            disc(f, cx, cy, 2.2 * u * 0.75, 1.3 * u * 0.75, body);
+            disc(f, cx - 0.3 * u * 0.4, cy - 0.3 * u * 0.4, 1.4 * u * 0.75, 0.7 * u * 0.75, lerp(body, [255, 190, 150], 0.3));
+            // claws held up in front, eyes on stalks
+            for sgn in [-1.0f32, 1.0] {
+                let arm = (cx + facing * 2.0 * u * 0.75, cy - 0.2 * u + sgn * 0.0);
+                let claw = (arm.0 + facing * 1.2 * u * 0.75, arm.1 - (1.2 + sgn * 0.4 + (self.t * 3.0 + sgn).sin() * 0.3) * u * 0.75);
+                thick(f, arm, claw, sc, body);
+                disc(f, claw.0, claw.1, 0.9 * u * 0.6, 0.7 * u * 0.6, body);
+                let eye = (cx + facing * (0.6 + sgn * 0.5) * u * 0.75, cy - 1.7 * u * 0.75);
+                thick(f, (eye.0, cy - 0.8 * u * 0.75), eye, sc, dark);
+                f.dot(eye.0 as i32, eye.1 as i32 - sc, sc + 1, col([250, 250, 240]), 1.0);
+            }
+        }
+    }
+
     /// Sand ripples and pebbles along each plane, plus caustics near the surface.
     pub(super) fn draw_ground_texture(&self, f: &mut Frame, slot: usize, bot: Rgb, floor: &[f32]) {
         let color = lerp(bot, self.sand(), PLANES[slot].5);
@@ -361,8 +422,7 @@ impl World {
         // Ripple lines that follow the contour of the floor.
         if near {
             for (k, (off, c, a)) in [(5, light, 0.35), (9, dark, 0.45), (14, light, 0.2)].into_iter().enumerate() {
-                for x in 0..self.w {
-                    let fy = floor[x];
+                for (x, &fy) in floor.iter().enumerate() {
                     let wob = ((x as f32 + self.off) * 0.09 / sc as f32 + k as f32 * 2.0).sin() * sc as f32 * 0.8;
                     let y = fy + (off * sc) as f32 + wob;
                     if y < self.h as f32 - 1.0 {
@@ -374,10 +434,10 @@ impl World {
         // Pebbles and shell glints, from a hash of the world position.
         let cell = (4 * sc) as usize;
         let gx = self.off as usize;
-        for x in (0..self.w).step_by(2) {
-            let fy = floor[x] as i32;
+        for (x, &fy) in floor.iter().enumerate().step_by(2) {
+            let fy = fy as i32;
             let wx = (x + gx + (self.cam64() * PLANES[slot].4 as f64) as usize) / cell;
-            for dy in (3..(self.h as i32 - fy).min(40 * sc as i32)).step_by(cell) {
+            for dy in (3..(self.h as i32 - fy).min(40 * sc)).step_by(cell) {
                 let r = hf(slot as u64 * 7919 + wx as u64, dy as u64 / cell as u64);
                 if r < 0.07 {
                     f.dot(x as i32, fy + dy, sc, lerp(shade(color, 0.7 + r * 4.0), bot, fog), 1.0);
@@ -437,7 +497,7 @@ impl World {
             let c = lerp([40, 70, 110], bot, 0.55 + 0.25 * (self.zf / 5.0).min(1.0));
             for k in 0..18 {
                 // Scattered through an elongated blob, each fish with its own slow drift.
-                let (ang, rad) = (hf(s, 20 + k) * 6.283, hf(s, 50 + k).powf(0.7));
+                let (ang, rad) = (hf(s, 20 + k) * std::f32::consts::TAU, hf(s, 50 + k).powf(0.7));
                 let x = cx as f32 + (ang.cos() * rad * 11.0 + (self.t * 0.5 + ang * 3.0).sin() * 1.5) * self.unit() * 0.7;
                 let y = cy + (ang.sin() * rad * 3.5 + (self.t * 0.4 + ang * 2.0).cos() * 0.8) * self.unit() * 0.5;
                 f.dot(x as i32, y as i32, self.px_scale, c, 0.8);
