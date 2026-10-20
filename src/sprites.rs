@@ -204,7 +204,7 @@ fn fish_cell(kind: Kind, st: &Style, s: f32, yy: f32, px: i32, py: i32) -> Cell 
 }
 
 /// Draws one fish. `len` is its body length in screen pixels; (x, y) is the top-left of its box.
-pub fn draw_fish(f: &mut Frame, kind: Kind, x: i32, y: i32, len: i32, flip: bool, t: f32, fog: (Rgb, f32), outline: bool) {
+pub fn draw_fish(f: &mut Frame, kind: Kind, x: i32, y: i32, len: i32, flip: bool, pitch: f32, t: f32, fog: (Rgb, f32), outline: bool) {
     let st = style(kind);
     let lenf = len as f32;
     let h = (lenf * if kind == Kind::Angler { 1.0 } else { 0.75 }) as i32;
@@ -256,14 +256,15 @@ pub fn draw_fish(f: &mut Frame, kind: Kind, x: i32, y: i32, len: i32, flip: bool
         }
     }
 
-    blit(f, &buf, w, h, x, y, flip, fog, outline);
+    blit(f, &buf, w, h, x, y, flip, pitch, fog, outline);
 }
 
 /// Writes a cell buffer to the frame, optionally rimmed with a darker outline.
-fn blit(f: &mut Frame, buf: &[Cell], w: i32, h: i32, x: i32, y: i32, flip: bool, fog: (Rgb, f32), outline: bool) {
+fn blit(f: &mut Frame, buf: &[Cell], w: i32, h: i32, x: i32, y: i32, flip: bool, pitch: f32, fog: (Rgb, f32), outline: bool) {
     let at = |px: i32, py: i32| -> Cell {
         if px < 0 || py < 0 || px >= w || py >= h { None } else { buf[(py * w + px) as usize] }
     };
+    let tilt = pitch.tan();
     for py in 0..h {
         for px in 0..w {
             let Some((col, alpha, glow)) = at(px, py) else { continue };
@@ -278,10 +279,12 @@ fn blit(f: &mut Frame, buf: &[Cell], w: i32, h: i32, x: i32, y: i32, flip: bool,
             }
             let c = if glow { c } else { lerp(c, fog.0, fog.1) };
             let sx = if flip { w - 1 - px } else { px };
+            // Pitch as a vertical shear: the nose side of the sprite moves, the tail side stays level.
+            let dy = (tilt * if flip { (w / 2 - sx) as f32 } else { (sx - w / 2) as f32 }).round() as i32;
             if alpha >= 0.99 {
-                f.set(x + sx, y + py, c);
+                f.set(x + sx, y + py + dy, c);
             } else {
-                f.blend(x + sx, y + py, c, alpha);
+                f.blend(x + sx, y + py + dy, c, alpha);
             }
         }
     }
@@ -337,5 +340,5 @@ pub fn draw_jelly(f: &mut Frame, x: i32, y: i32, len: i32, t: f32, fog: (Rgb, f3
             }
         }
     }
-    blit(f, &buf, w, h, x, y, false, fog, false);
+    blit(f, &buf, w, h, x, y, false, 0.0, fog, false);
 }

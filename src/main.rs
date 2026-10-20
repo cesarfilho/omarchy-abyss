@@ -5,6 +5,7 @@ mod cutscene;
 mod doctor;
 mod gfx;
 mod ipc;
+mod path;
 mod power;
 mod sprites;
 mod state;
@@ -27,7 +28,8 @@ uso:
   abyss stop                               encerra o screensaver sem resumo
   abyss doctor [--fix]                     confere a instalação (e limpa restos de uma falha)
   abyss config                             mostra a configuração (~/.config/abyss/config.json)
-  abyss snapshot [zona 0-5] [reef 0-30]    imprime um quadro ANSI e sai";
+  abyss snapshot [zona 0-5] [reef 0-30] [--ppm ARQ] [--t SEG] [--size LxA] [--season ID]
+                                           desenha um quadro (ANSI, ou imagem PPM sem tocar a tela)";
 
 fn status_json() {
     let s = Save::load();
@@ -88,16 +90,57 @@ fn status() {
     }
 }
 
+/// `abyss snapshot [zone] [reef] [--ppm FILE] [--t SECONDS] [--size WxH] [--season ID]`: renders one
+/// frame without a terminal. Without `--ppm` it prints the frame as ANSI; with it, a PPM image
+/// (convert with `magick FILE out.png`), which never touches the screen.
 fn snapshot(args: &[String]) {
-    let zone: f32 = args.first().and_then(|v| v.parse().ok()).unwrap_or(1.0);
-    let reef: u32 = args.get(1).and_then(|v| v.parse().ok()).unwrap_or(12);
-    let (cols, rows) = (140usize, 40usize);
-    let mut world = world::World::new(cols * 2, rows * 4, world::Layout::single(cols * 2), zone, reef, false).at(1_700_000_000.0);
-    for _ in 0..200 {
-        world.update(0.1, zone, reef, false);
-    }
-    let mut frame = Frame::new(cols * 2, rows * 4);
+    let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let nums: Vec<&String> = {
+        let mut skip = false;
+        args.iter()
+            .filter(|a| {
+                if skip {
+                    skip = false;
+                    return false;
+                }
+                if a.starts_with("--") {
+                    skip = true;
+                    return false;
+                }
+                true
+            })
+            .collect()
+    };
+    let zone: f32 = nums.first().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+    let reef: u32 = nums.get(1).and_then(|v| v.parse().ok()).unwrap_or(12);
+    let t: f64 = opt("--t").and_then(|v| v.parse().ok()).unwrap_or(1_700_000_000.0);
+    let season = opt("--season").and_then(|id| state::season_info(&id)).map(|s| s.id);
+    let ppm = opt("--ppm");
+    let (w, h) = match (&ppm, opt("--size").and_then(|s| s.split_once('x').map(|(a, b)| (a.parse().ok(), b.parse().ok())))) {
+        (_, Some((Some(w), Some(h)))) => (w, h),
+        (Some(_), _) => (1280usize, 720usize),
+        _ => (280, 160),
+    };
+    let mut world = world::World::new(w, h, world::Layout::single(w), zone, reef, false).at(t);
+    world.set_palette(theme::Palette::classic());
+    world.set_season(season);
+    world.update(0.0, zone, reef, false);
+    let mut frame = Frame::new(w, h);
     world.draw(&mut frame);
+    if let Some(path) = ppm {
+        let mut data = format!("P6\n{w} {h}\n255\n").into_bytes();
+        for y in 0..h {
+            for x in 0..w {
+                data.extend_from_slice(&frame.at(x, y));
+            }
+        }
+        if let Err(e) = std::fs::write(&path, data) {
+            eprintln!("abyss: cannot write {path}: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    let (cols, rows) = (w / 2, h / 4);
     let mut out = std::io::stdout().lock();
     let _ = Presenter::new(cols, rows).present(&frame, &Overlay::new(cols, rows), &mut out);
     println!();

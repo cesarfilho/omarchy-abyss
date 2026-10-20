@@ -1,4 +1,5 @@
 use crate::gfx::{Frame, Rgb, lerp};
+use crate::path::Path;
 use crate::sprites::{self, SPECIES};
 use crate::theme::Palette;
 
@@ -62,7 +63,7 @@ impl Layout {
     }
 }
 
-fn mix(seed: u64, k: u64) -> u64 {
+pub(crate) fn mix(seed: u64, k: u64) -> u64 {
     let mut z = seed.wrapping_add(k.wrapping_mul(0x9E37_79B9_7F4A_7C15));
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -70,23 +71,23 @@ fn mix(seed: u64, k: u64) -> u64 {
 }
 
 /// Deterministic stream of floats in [0, 1) for world generation.
-struct Gen(u64);
+pub(crate) struct Gen(pub(crate) u64);
 
 impl Gen {
-    fn f(&mut self) -> f32 {
+    pub(crate) fn f(&mut self) -> f32 {
         self.0 = mix(self.0, 1);
         ((self.0 >> 40) as f32) / (1u64 << 24) as f32
     }
 
-    fn range(&mut self, lo: f32, hi: f32) -> f32 {
+    pub(crate) fn range(&mut self, lo: f32, hi: f32) -> f32 {
         lo + (hi - lo) * self.f()
     }
 
-    fn below(&mut self, n: u32) -> u32 {
+    pub(crate) fn below(&mut self, n: u32) -> u32 {
         (self.f() * n as f32) as u32 % n.max(1)
     }
 
-    fn chance(&mut self, p: f32) -> bool {
+    pub(crate) fn chance(&mut self, p: f32) -> bool {
         self.f() < p
     }
 }
@@ -95,20 +96,25 @@ fn now_secs() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-/// Position on a looping track of length `len` (panorama plus margins), minus the margin.
-fn track(x0: f64, v: f64, tt: f64, len: f64, margin: f64) -> f32 {
-    (((x0 + v * tt) % len + len) % len - margin) as f32
-}
-
 struct Fish {
     species: usize,
     z: f32,
-    x0: f64,
-    base_y: f32, // fraction of the height
-    vx: f32,
+    /// Route shared by the whole school (a loner has its own); followers trail the leader.
+    path: usize,
+    delay: f32,
+    ox: f32,
+    oy: f32,
     amp: f32,
     freq: f32,
     phase: f32,
+}
+
+/// Where a fish is on this screen and which way it is heading.
+struct Pose {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
 }
 
 struct Bubble {
@@ -128,9 +134,7 @@ struct Snow {
 
 struct Jelly {
     z: f32,
-    x0: f64,
-    base_y: f32,
-    vx: f32,
+    path: Path,
     phase: f32,
 }
 
@@ -161,6 +165,7 @@ pub struct World {
     reef: u32,
     night: bool,
     fishes: Vec<Fish>,
+    paths: Vec<Path>,
     bubbles: Vec<Bubble>,
     snow: Vec<Snow>,
     jellies: Vec<Jelly>,
@@ -193,6 +198,7 @@ impl World {
             reef,
             night,
             fishes: Vec::new(),
+            paths: Vec::new(),
             bubbles: Vec::new(),
             snow: Vec::new(),
             jellies: Vec::new(),
@@ -276,24 +282,30 @@ impl World {
             .map(|(i, _)| i)
             .collect();
         self.present = ok.iter().map(|&i| SPECIES[i].id).collect();
-        let len_track = self.track_len();
+        self.paths.clear();
+        let h = self.h as f32;
         while !ok.is_empty() && self.fishes.len() < target {
             let species = ok[g.below(ok.len() as u32) as usize];
             let sp = &SPECIES[species];
-            let dir = if g.chance(0.5) { 1.0 } else { -1.0 };
             let school_z = g.range(0.0, 1.0);
-            let speed = g.range(sp.speed.0, sp.speed.1) * dir * self.unit() * scale_z(school_z);
+            let speed = g.range(sp.speed.0, sp.speed.1) * self.unit() * scale_z(school_z);
             let sprite_w = self.refw * sp.len * scale_z(school_z);
-            let x0 = g.range(0.0, len_track as f32) as f64;
-            let base_y = g.range(0.12, 0.68);
+            // Every school (or loner) picks its own heading and wanders in a band of the water column.
+            let ymid = g.range(0.25, 0.5) * h;
+            let r = g.range(0.05, 0.2) * h;
+            let r = r.min(ymid - 0.1 * h).min(0.7 * h - ymid).max(2.0);
+            let group = self.paths.len();
+            self.paths.push(Path::new(&mut g, speed as f64, ymid as f64, r as f64));
             let freq = g.range(0.6, 1.4);
             for i in 0..sp.school {
                 self.fishes.push(Fish {
                     species,
                     z: (school_z + g.range(-0.04, 0.04)).clamp(0.0, 1.0),
-                    x0: x0 - dir as f64 * i as f64 * (sprite_w as f64 * 1.5) + g.range(-3.0, 3.0) as f64,
-                    base_y: (base_y + g.range(-0.04, 0.04)).clamp(0.08, 0.7),
-                    vx: speed * g.range(0.95, 1.05),
+                    path: group,
+                    // Followers trail the leader along its own route, so the school turns together.
+                    delay: i as f32 * sprite_w * 1.5 / speed.max(1.0) + g.range(-0.5, 0.5),
+                    ox: g.range(-0.4, 0.4) * sprite_w,
+                    oy: g.range(-0.5, 0.5) * sprite_w,
                     amp: g.range(1.0, 3.5) * scale_z(school_z),
                     freq,
                     phase: g.range(0.0, std::f32::consts::TAU),
@@ -318,12 +330,12 @@ impl World {
             .map(|_| Snow { x: g.range(0.0, self.pano), y0: g.range(0.0, self.h as f32), vy: g.range(1.5, 5.0) * self.unit() })
             .collect();
         self.jellies = (0..5)
-            .map(|_| Jelly {
-                z: g.range(0.0, 0.9),
-                x0: g.range(0.0, len_track as f32) as f64,
-                base_y: g.range(0.15, 0.6),
-                vx: g.range(-4.0, 4.0) * self.unit(),
-                phase: g.range(0.0, std::f32::consts::TAU),
+            .map(|_| {
+                let z = g.range(0.0, 0.9);
+                let ymid = g.range(0.25, 0.5) * h;
+                let r = (g.range(0.05, 0.15) * h).min(ymid - 0.12 * h).max(2.0);
+                let speed = g.range(2.0, 5.0) * self.unit();
+                Jelly { z, path: Path::new(&mut g, speed as f64, ymid as f64, r as f64), phase: g.range(0.0, std::f32::consts::TAU) }
             })
             .collect();
         let n_glows = (70.0 * self.pano / self.refw) as usize;
@@ -579,8 +591,19 @@ impl World {
         }
     }
 
-    fn fish_x(&self, fish: &Fish) -> f32 {
-        track(fish.x0, fish.vx as f64, self.tt, self.track_len(), self.margin()) - self.off
+    /// Panorama x (wrapped, minus the margin) to this screen's x.
+    fn screen_x(&self, x: f64) -> f32 {
+        let len = self.track_len();
+        (x.rem_euclid(len) - self.margin()) as f32 - self.off
+    }
+
+    fn fish_pose(&self, fish: &Fish) -> Pose {
+        let p = &self.paths[fish.path];
+        let t = self.tt - fish.delay as f64;
+        let (x, y) = p.pos(t);
+        let (vx, vy) = p.vel(t);
+        let bob = (self.t * fish.freq + fish.phase).sin() * fish.amp;
+        Pose { x: self.screen_x(x + fish.ox as f64), y: y as f32 + fish.oy + bob, vx: vx as f32, vy: vy as f32 }
     }
 
     /// Soft elliptical shadows on the seabed under fish swimming close to it.
@@ -592,13 +615,14 @@ impl World {
         let dark = lerp(bot, [0, 0, 0], 0.55);
         for fish in self.fishes.iter().filter(|fi| slot_of(fi.z) == slot) {
             let len = self.refw * SPECIES[fish.species].len * scale_z(fish.z);
-            let fx = self.fish_x(fish);
+            let pose = self.fish_pose(fish);
+            let fx = pose.x;
             if fx < -len || fx > self.w as f32 {
                 continue;
             }
             let cx = fx + len * 0.5;
             let floor = self.floor_y(slot, cx.clamp(0.0, self.w as f32 - 1.0));
-            let y = fish.base_y * self.h as f32 + (self.t * fish.freq + fish.phase).sin() * fish.amp;
+            let y = pose.y;
             let dist = floor - (y + len * 0.35);
             if dist <= 0.0 || dist > reach {
                 continue;
@@ -729,16 +753,19 @@ impl World {
         for fish in self.fishes.iter().filter(|fi| slot_of(fi.z) == slot) {
             let sp = &SPECIES[fish.species];
             let len = (self.refw * sp.len * scale_z(fish.z)) as i32;
-            let fx = self.fish_x(fish);
+            let pose = self.fish_pose(fish);
+            let fx = pose.x;
             if fx < -(len as f32) || fx > self.w as f32 {
                 continue;
             }
             let fog = (bot, self.fog_z(fish.z));
             let floor = self.floor_y(slot, (fx + len as f32 * 0.5).clamp(0.0, self.w as f32 - 1.0));
-            let y = (fish.base_y * self.h as f32 + (self.t * fish.freq + fish.phase).sin() * fish.amp).min(floor - len as f32 * 0.55);
+            let y = pose.y.min(floor - len as f32 * 0.55);
+            // Nose up or down with the heading (a vertical shear in the sprite), capped so a turn never rolls the fish.
+            let pitch = pose.vy.atan2(pose.vx.abs().max(0.001)).clamp(-0.7, 0.7);
             // Distant fish lose their dark outline: at that size it only muddies them.
             let outline = len >= 14 && fish.z < 0.65;
-            sprites::draw_fish(f, sp.kind, fx as i32, y as i32, len, fish.vx < 0.0, self.t * fish.freq + fish.phase, fog, outline);
+            sprites::draw_fish(f, sp.kind, fx as i32, y as i32, len, pose.vx < 0.0, pitch, self.t * fish.freq + fish.phase, fog, outline);
         }
     }
 
@@ -747,11 +774,12 @@ impl World {
         for j in self.jellies.iter().take(target).filter(|j| slot_of(j.z) == slot) {
             let fog = (bot, self.fog_z(j.z) * 0.6);
             let len = (self.refw * 0.036 * scale_z(j.z)) as i32;
-            let x = track(j.x0, j.vx as f64, self.tt, self.track_len(), self.margin()) - self.off;
+            let (jx, jy) = j.path.pos(self.tt);
+            let x = self.screen_x(jx);
             if x < -(len as f32) || x > self.w as f32 {
                 continue;
             }
-            let y = j.base_y * self.h as f32 + (self.t * 0.7 + j.phase).sin() * 6.0;
+            let y = jy as f32 + (self.t * 0.7 + j.phase).sin() * 6.0;
             sprites::draw_jelly(f, x as i32, y as i32, len, self.t + j.phase, fog);
         }
     }
@@ -900,6 +928,43 @@ mod tests {
         for sp in SPECIES {
             let c = crate::state::creature(sp.id).unwrap_or_else(|| panic!("{} missing from the bestiary", sp.id));
             assert_eq!(c.zones, sp.zones, "{}", sp.id);
+        }
+    }
+
+    #[test]
+    fn schools_and_loners_head_in_different_directions() {
+        let w = World::new(320, 180, Layout::single(320), 1.2, 25, false).at(T);
+        let (mut left, mut right, mut rising, mut sinking) = (0, 0, 0, 0);
+        let mut seen = Vec::new();
+        for f in &w.fishes {
+            if seen.contains(&f.path) {
+                continue;
+            }
+            seen.push(f.path);
+            let (vx, vy) = w.paths[f.path].vel(T);
+            if vx < 0.0 { left += 1 } else { right += 1 }
+            if vy < -0.5 { rising += 1 }
+            if vy > 0.5 { sinking += 1 }
+        }
+        assert!(seen.len() >= 8, "{} groups", seen.len());
+        assert!(left >= 2 && right >= 2, "{left} left / {right} right: groups must not share one direction");
+        assert!(rising + sinking >= 2, "some groups swim diagonally");
+    }
+
+    #[test]
+    fn followers_retrace_the_leaders_route_and_stay_in_the_water() {
+        let w = World::new(320, 180, Layout::single(320), 0.5, 25, false).at(T);
+        let school = w.fishes.iter().filter(|f| SPECIES[f.species].school > 1).map(|f| f.path).next().expect("a school");
+        let members: Vec<_> = w.fishes.iter().filter(|f| f.path == school).collect();
+        assert!(members.len() >= 3);
+        let p = &w.paths[school];
+        for m in &members {
+            // The follower is where the route was `delay` seconds ago (plus its own offset).
+            let (x, y) = p.pos(w.tt - m.delay as f64);
+            let pose = w.fish_pose(m);
+            assert!((pose.x - w.screen_x(x + m.ox as f64)).abs() < 1e-3, "x follows the route");
+            assert!((pose.y - (y as f32 + m.oy)).abs() <= m.amp + 1e-3, "y follows the route within its bob");
+            assert!(pose.y > 0.0 && pose.y < 180.0 * 0.85, "y = {}", pose.y);
         }
     }
 
