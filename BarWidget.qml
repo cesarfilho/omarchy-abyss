@@ -15,6 +15,8 @@ BarWidget {
   property string mode: "abyss"
   property string quality: "ultra"
   property bool opened: false
+  // The plugin is only the front end; the `abyss` program must be installed too (see the README).
+  property bool binaryMissing: false
 
   readonly property color fg: bar ? bar.barForeground : Color.foreground
   readonly property string font: bar ? bar.fontFamily : Style.font.family
@@ -22,7 +24,10 @@ BarWidget {
   readonly property color accent: stats ? zoneColors[Math.min(5, stats.zone)] : zoneColors[0]
 
   function close() { opened = false }
-  function toggle() { opened = !opened }
+  function toggle() {
+    opened = !opened
+    if (opened) probe.running = true
+  }
 
   function setMode(next) {
     root.mode = next
@@ -103,6 +108,13 @@ BarWidget {
       } catch (e) {}
     }
     onFileChanged: reload()
+  }
+
+  Process {
+    id: probe
+    command: ["bash", "-lc", "command -v abyss >/dev/null"]
+    running: true
+    onExited: function(exitCode, exitStatus) { root.binaryMissing = exitCode !== 0 }
   }
 
   Process { id: modeProcess }

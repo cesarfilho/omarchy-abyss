@@ -36,11 +36,11 @@ check() {
 package() {
   cd "$pkgname-$pkgver"
   install -Dm755 target/release/abyss "$pkgdir/usr/bin/abyss"
-  install -Dm755 plugin/abyss-launch "$pkgdir/usr/bin/abyss-launch"
-  install -Dm755 plugin/abyss-screensaver "$pkgdir/usr/bin/abyss-screensaver"
+  install -Dm755 bin/abyss-launch "$pkgdir/usr/bin/abyss-launch"
+  install -Dm755 bin/abyss-screensaver "$pkgdir/usr/bin/abyss-screensaver"
   install -Dm755 scripts/abyss-setup "$pkgdir/usr/bin/abyss-setup"
-  install -Dm644 plugin/manifest.json "$pkgdir/usr/share/abyss/plugin/manifest.json"
-  install -m644 plugin/*.qml -t "$pkgdir/usr/share/abyss/plugin/"
+  install -Dm644 manifest.json "$pkgdir/usr/share/abyss/plugin/manifest.json"
+  install -m644 *.qml -t "$pkgdir/usr/share/abyss/plugin/"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

@@ -20,6 +20,30 @@ Column {
 
   function tint(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
 
+  // ---------- Missing program notice ----------
+  Rectangle {
+    visible: col.host.binaryMissing
+    width: parent.width
+    height: visible ? missingText.implicitHeight + Style.space(16) : 0
+    radius: Style.space(8)
+    color: col.tint("#ee8a4a", 0.16)
+    border.width: 1
+    border.color: col.tint("#ee8a4a", 0.5)
+    Text {
+      id: missingText
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.margins: Style.space(10)
+      textFormat: Text.PlainText
+      text: "O programa abyss não está instalado. Na pasta deste plugin (~/.config/omarchy/plugins/io.github.cesarfilho.abyss) rode ./install.sh --setup; veja o README."
+      color: col.fg
+      font.family: col.ff
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
+    }
+  }
+
   // ---------- Hero: level ring + headline numbers ----------
   Item {
     width: parent.width

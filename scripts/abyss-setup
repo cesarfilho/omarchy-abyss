@@ -20,9 +20,11 @@ END='// abyss-menu-end'
 ENTRY='"system.screensaver": {"icon":"󱄄","label":"Screensaver","action":"abyss-screensaver force"}'
 
 here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
-data=
-for d in "${ABYSS_DATA:-}" "$here/.." "${XDG_DATA_HOME:-$HOME/.local/share}/abyss" /usr/share/abyss; do
-  [[ -n $d && -d $d/plugin ]] && { data=$(cd "$d" && pwd); break; }
+# Where the plugin files (manifest.json + *.qml) come from: this checkout (they live at its root),
+# the copy `install.sh` keeps in the user data dir, or the distro package.
+src=
+for d in "${ABYSS_DATA:-}" "$here/.." "${XDG_DATA_HOME:-$HOME/.local/share}/abyss/plugin" /usr/share/abyss/plugin; do
+  [[ -n $d && -f $d/manifest.json ]] && { src=$(cd "$d" && pwd); break; }
 done
 
 say() { printf '%s\n' "$*"; }
@@ -30,9 +32,14 @@ need() { command -v "$1" >/dev/null || { say "abyss-setup: '$1' is required" >&2
 backup() { [[ -f $1 ]] && cp -p "$1" "$1.bak.$(date +%s)" || true; }
 
 plugin() {
-  [[ -n $data ]] || { say "abyss-setup: plugin files not found (set ABYSS_DATA)" >&2; exit 1; }
+  [[ -n $src ]] || { say "abyss-setup: plugin files not found (set ABYSS_DATA)" >&2; exit 1; }
   mkdir -p "$PLUGIN_DIR"
-  cp "$data"/plugin/*.qml "$data"/plugin/manifest.json "$PLUGIN_DIR"/
+  # Installed from the marketplace, this checkout already is the plugin folder.
+  if [[ $(readlink -f "$src") == "$(readlink -f "$PLUGIN_DIR")" ]]; then
+    say "plugin already in place at $PLUGIN_DIR"
+    return 0
+  fi
+  cp "$src"/*.qml "$src"/manifest.json "$PLUGIN_DIR"/
   say "plugin copied to $PLUGIN_DIR"
 }
 

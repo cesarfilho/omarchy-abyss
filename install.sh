@@ -7,12 +7,12 @@ cd "$(dirname "$0")"
 
 cargo build --release
 install -Dm755 target/release/abyss ~/.local/bin/abyss
-install -Dm755 plugin/abyss-launch ~/.local/bin/abyss-launch
-install -Dm755 plugin/abyss-screensaver ~/.local/bin/abyss-screensaver
+install -Dm755 bin/abyss-launch ~/.local/bin/abyss-launch
+install -Dm755 bin/abyss-screensaver ~/.local/bin/abyss-screensaver
 install -Dm755 scripts/abyss-setup ~/.local/bin/abyss-setup
 # The plugin files live next to the user data so `abyss-setup plugin` works without this checkout.
 mkdir -p ~/.local/share/abyss/plugin
-cp plugin/*.qml plugin/manifest.json ~/.local/share/abyss/plugin/
+cp *.qml manifest.json ~/.local/share/abyss/plugin/
 ~/.local/bin/abyss-setup plugin
 ~/.local/bin/abyss-setup record-upstream
 
