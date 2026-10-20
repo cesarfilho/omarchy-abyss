@@ -1,0 +1,7 @@
+#!/bin/bash
+# Launch the screensaver selected by `abyss mode` (abyss | default). Pass "force" to ignore the off toggle.
+if [[ $(abyss mode) == default ]]; then
+  exec omarchy-launch-screensaver "$@"
+else
+  exec abyss-launch "$@"
+fi

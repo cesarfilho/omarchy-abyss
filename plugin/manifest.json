@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.cesarfilho.abyss",
+  "name": "Abyss",
+  "version": "1.0.0",
+  "author": "cesarfilho",
+  "license": "MIT",
+  "description": "Screensaver do fundo do mar gamificado: dispara o Abyss ao ficar ocioso e mostra conquistas e estatísticas no painel da barra.",
+  "kinds": ["service", "bar-widget"],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Abyss",
+    "description": "Nível, conquistas e estatísticas do screensaver Abyss.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
