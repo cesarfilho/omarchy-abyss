@@ -1,5 +1,7 @@
 # Abyss
 
+[![ci](https://github.com/cesarfilho/omarchy-abyss/actions/workflows/ci.yml/badge.svg)](https://github.com/cesarfilho/omarchy-abyss/actions/workflows/ci.yml) [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Screensaver gamificado do fundo do mar para o [Omarchy](https://omarchy.org/). Um oceano em pixel-art roda no terminal enquanto você está longe do computador, evolui com o tempo ocioso e rende XP, troféus e pontos. Um plugin do shell dispara o screensaver na ociosidade e mostra suas estatísticas na barra.
 
 *English: [README.md](README.md)*
@@ -49,7 +51,7 @@ Para remover: `./uninstall.sh` (ou `abyss-setup disable` para desplugar e manter
 
 ### Pacote Arch
 
-`packaging/PKGBUILD` monta um pacote a partir deste diretório: `cd packaging && makepkg -si`. Depois rode `abyss-setup enable` como seu usuário.
+`packaging/PKGBUILD` monta a versão publicada (tag no GitHub): `cd packaging && makepkg -si` (use `makepkg -p PKGBUILD.dev` para empacotar este diretório). Depois rode `abyss-setup enable` como seu usuário.
 
 ## Uso
 
@@ -103,3 +105,11 @@ scripts/e2e-idle.sh                 # caminho real de ociosidade na sua sessão:
 ```
 
 `scripts/e2e-idle.sh --real` espera o temporizador de ociosidade de verdade (não toque no teclado). Notas de arquitetura em [`CLAUDE.md`](CLAUDE.md).
+
+## Licença
+
+[MIT](LICENSE) © 2026 Cesar Roberto Pamplona Filho.
+
+## Créditos
+
+`plugin/abyss-launch` é adaptado do `omarchy-launch-screensaver` do Omarchy (MIT, © Basecamp / David Heinemeier Hansson). As ideias de corrente marinha, cardume em trilha de líder e corpo de tubarão em cadeia foram inspiradas em [stackedlol/ascii-sharks](https://github.com/stackedlol/ascii-sharks); nenhum código foi aproveitado.

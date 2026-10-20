@@ -1,5 +1,7 @@
 # Abyss
 
+[![ci](https://github.com/cesarfilho/omarchy-abyss/actions/workflows/ci.yml/badge.svg)](https://github.com/cesarfilho/omarchy-abyss/actions/workflows/ci.yml) [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A gamified deep-sea screensaver for [Omarchy](https://omarchy.org/). A pixel-art ocean runs in your terminal while you are away, evolves with your idle time and earns XP, trophies and points. A shell plugin starts it when you go idle and shows your stats from the bar.
 
 *Português: [README.pt-BR.md](README.pt-BR.md)*
@@ -49,7 +51,7 @@ To remove it: `./uninstall.sh` (or `abyss-setup disable` to unplug and keep the 
 
 ### Arch package
 
-`packaging/PKGBUILD` builds a package from this checkout: `cd packaging && makepkg -si`. Afterwards run `abyss-setup enable` as your user.
+`packaging/PKGBUILD` builds the tagged release from GitHub: `cd packaging && makepkg -si` (use `makepkg -p PKGBUILD.dev` to build the current checkout instead). Afterwards run `abyss-setup enable` as your user.
 
 ## Usage
 
@@ -103,3 +105,11 @@ scripts/e2e-idle.sh                 # real idle path on your session: plugin -> 
 ```
 
 `scripts/e2e-idle.sh --real` waits for the actual idle timer instead (keep your hands off the keyboard). Architecture notes are in [`CLAUDE.md`](CLAUDE.md).
+
+## License
+
+[MIT](LICENSE) © 2026 Cesar Roberto Pamplona Filho.
+
+## Credits
+
+`plugin/abyss-launch` is adapted from Omarchy's `omarchy-launch-screensaver` (MIT, © Basecamp / David Heinemeier Hansson). Ideas for ocean currents, leader-trail schooling and a chained shark body were inspired by [stackedlol/ascii-sharks](https://github.com/stackedlol/ascii-sharks); no code was taken from it.

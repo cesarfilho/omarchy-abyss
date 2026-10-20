@@ -1,12 +1,11 @@
-# Maintainer: Cesar Pamplona Filho <cesarpamplonafilho@gmail.com>
-# Builds from this checkout (the PKGBUILD lives in packaging/). For a published release, replace
-# `_src` with a `source=()` entry pointing at the tagged tarball and add its checksum.
+# Maintainer: Cesar Roberto Pamplona Filho <cesarpamplonafilho@gmail.com>
 pkgname=omarchy-abyss
 pkgver=0.2.0
 pkgrel=1
 pkgdesc='Gamified deep-sea screensaver for Omarchy: pixel-art ocean, XP, trophies, bestiary, shell plugin'
 arch=(x86_64 aarch64)
-license=(custom) # no licence file chosen yet; set this before publishing
+url='https://github.com/cesarfilho/omarchy-abyss'
+license=(MIT)
 depends=(hyprland quickshell jq socat)
 makedepends=(cargo)
 optdepends=('foot: terminal used by the Omarchy screensaver'
@@ -14,33 +13,34 @@ optdepends=('foot: terminal used by the Omarchy screensaver'
             'grim: scripts/e2e-idle.sh screenshots')
 options=(!lto) # the release profile already sets lto = "thin"
 install=omarchy-abyss.install
-
-_src="$startdir/.."
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP') # replaced with the real hash once the tag exists
 
 prepare() {
-  cd "$_src"
+  cd "$pkgname-$pkgver"
   cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
 build() {
-  cd "$_src"
-  export CARGO_TARGET_DIR="$srcdir/target"
+  cd "$pkgname-$pkgver"
+  export CARGO_TARGET_DIR=target
   cargo build --release --locked
 }
 
 check() {
-  cd "$_src"
-  export CARGO_TARGET_DIR="$srcdir/target"
+  cd "$pkgname-$pkgver"
+  export CARGO_TARGET_DIR=target
   cargo test --release --locked
 }
 
 package() {
-  cd "$_src"
-  install -Dm755 "$srcdir/target/release/abyss" "$pkgdir/usr/bin/abyss"
+  cd "$pkgname-$pkgver"
+  install -Dm755 target/release/abyss "$pkgdir/usr/bin/abyss"
   install -Dm755 plugin/abyss-launch "$pkgdir/usr/bin/abyss-launch"
   install -Dm755 plugin/abyss-screensaver "$pkgdir/usr/bin/abyss-screensaver"
   install -Dm755 scripts/abyss-setup "$pkgdir/usr/bin/abyss-setup"
   install -Dm644 plugin/manifest.json "$pkgdir/usr/share/abyss/plugin/manifest.json"
   install -m644 plugin/*.qml -t "$pkgdir/usr/share/abyss/plugin/"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
