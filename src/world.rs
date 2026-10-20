@@ -1,3 +1,5 @@
+mod scenery;
+
 use crate::gfx::{Frame, Rgb, lerp};
 use crate::path::Path;
 use crate::shark::{self, SharkRun};
@@ -507,11 +509,15 @@ impl World {
     pub fn draw(&self, f: &mut Frame) {
         let (top, bot) = self.water();
         self.draw_water(f, top, bot);
+        self.draw_surface(f);
+        self.draw_far_schools(f, bot);
         self.draw_snow(f);
         self.draw_bubbles(f, true);
         // Far to near: each plane of seabed, then what swims in front of it.
         for slot in (0..5).rev() {
-            self.draw_seabed(f, slot, bot);
+            let floor = self.floor_row(slot);
+            self.draw_seabed(f, slot, bot, &floor);
+            self.draw_scenery(f, slot, bot, &floor);
             if slot <= 1 {
                 self.draw_corals(f, bot, slot);
             }
@@ -608,11 +614,11 @@ impl World {
         lerp([185, 165, 115], [58, 54, 66], (self.zf / 2.5).min(1.0))
     }
 
-    fn draw_seabed(&self, f: &mut Frame, slot: usize, bot: Rgb) {
+    fn draw_seabed(&self, f: &mut Frame, slot: usize, bot: Rgb, floor: &[f32]) {
         let color = lerp(bot, self.sand(), PLANES[slot].5);
         let edge = lerp(color, [255, 255, 255], 0.12);
         for x in 0..self.w {
-            let fy = self.floor_y(slot, x as f32) as i32;
+            let fy = floor[x] as i32;
             for y in fy.max(0)..self.h as i32 {
                 f.set(x as i32, y, if y == fy && slot == 0 { edge } else { color });
             }
@@ -1059,6 +1065,19 @@ mod tests {
     }
 
     #[test]
+    fn the_fast_floor_row_matches_floor_y() {
+        for (zone, t) in [(0.5, 1_700_000_000.0), (3.5, 1_712_345_678.9)] {
+            let w = World::new(320, 180, Layout { pano_w: 640, off: 320 }, zone, 5, false).at(t);
+            for slot in 0..5 {
+                let row = w.floor_row(slot);
+                for x in (0..320).step_by(7) {
+                    assert!((row[x] - w.floor_y(slot, x as f32)).abs() < 0.02, "slot {slot} x {x}: {} vs {}", row[x], w.floor_y(slot, x as f32));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn seasons_change_the_scene() {
         let plain = frame_of(160, 90, Layout::single(160), 1.0);
         let mut w = World::new(160, 90, Layout::single(160), 1.0, 10, false).at(T);
@@ -1103,7 +1122,13 @@ mod bench {
         t!("water", world.draw_water(&mut f, top, bot));
         t!("snow", world.draw_snow(&mut f));
         t!("bubbles", { world.draw_bubbles(&mut f, true); world.draw_bubbles(&mut f, false) });
-        t!("seabed", for s in 0..5 { world.draw_seabed(&mut f, s, bot) });
+        let rows: Vec<Vec<f32>> = (0..5).map(|s| world.floor_row(s)).collect();
+        t!("floor_row", for s in 0..5 { world.floor_row(s); });
+        t!("seabed", for s in 0..5 { world.draw_seabed(&mut f, s, bot, &rows[s]) });
+        t!("ground", for s in 0..5 { world.draw_ground_texture(&mut f, s, bot, &rows[s]) });
+        t!("props", for s in 0..5 { world.draw_props(&mut f, s, bot) });
+        t!("surface", world.draw_surface(&mut f));
+        t!("farfish", world.draw_far_schools(&mut f, bot));
         t!("corals", for s in 0..2 { world.draw_corals(&mut f, bot, s) });
         t!("shadows", for s in 0..5 { world.draw_shadows(&mut f, bot, s) });
         t!("jellies", for s in 0..5 { world.draw_jellies(&mut f, bot, s) });
