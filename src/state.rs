@@ -75,6 +75,7 @@ pub const BESTIARY: &[Creature] = &[
     Creature { id: "viper", name: "Peixe-víbora", desc: "Dentes longos e fotóforos verdes", zones: (3, 5) },
     Creature { id: "angler", name: "Tamboril-abissal", desc: "Pesca com uma isca luminosa", zones: (4, 5) },
     Creature { id: "jelly", name: "Água-viva", desc: "Pulsa em silêncio no crepúsculo", zones: (2, 5) },
+    Creature { id: "shark", name: "Tubarão", desc: "Patrulha o mar aberto; os cardumes se abrem à sua passagem", zones: (0, 3) },
     Creature { id: "whale", name: "Baleia", desc: "Cruza o mar a cada poucos minutos", zones: (0, 3) },
     Creature { id: "bloom", name: "Maré bioluminescente", desc: "Plâncton que brilha à noite e no fundo", zones: (0, 5) },
 ];

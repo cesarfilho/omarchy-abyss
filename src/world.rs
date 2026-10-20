@@ -1,5 +1,8 @@
 use crate::gfx::{Frame, Rgb, lerp};
 use crate::path::Path;
+use crate::shark::{self, SharkRun};
+#[cfg(test)]
+use crate::shark::shark_reach;
 use crate::sprites::{self, SPECIES};
 use crate::theme::Palette;
 
@@ -38,7 +41,7 @@ fn slot_of(z: f32) -> usize {
 
 const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 const DITHER_STEP: f32 = 16.0;
-const SEED: u64 = 0x000A_B155_0CEA;
+pub(crate) const SEED: u64 = 0x000A_B155_0CEA;
 const WHALE_WINDOW: f64 = 300.0;
 const BLOOM_WINDOW: f64 = 240.0;
 
@@ -166,6 +169,8 @@ pub struct World {
     night: bool,
     fishes: Vec<Fish>,
     paths: Vec<Path>,
+    shark: Option<SharkRun>,
+    shark_key: Option<(u64, usize, usize, bool)>,
     bubbles: Vec<Bubble>,
     snow: Vec<Snow>,
     jellies: Vec<Jelly>,
@@ -199,6 +204,8 @@ impl World {
             night,
             fishes: Vec::new(),
             paths: Vec::new(),
+            shark: None,
+            shark_key: None,
             bubbles: Vec::new(),
             snow: Vec::new(),
             jellies: Vec::new(),
@@ -225,11 +232,24 @@ impl World {
         self.tt = t;
         self.t = (t % 100_000.0) as f32;
         self.populate();
+        self.refresh_shark();
         self
     }
 
     fn now(&self) -> f64 {
         self.fixed.unwrap_or_else(now_secs)
+    }
+
+    /// Plans the shark's visit for the current window (or none). Cached until the window, the
+    /// screen size or the zone changes.
+    fn refresh_shark(&mut self) {
+        let k = (self.tt / shark::WINDOW).floor() as u64;
+        let key = (k, self.pano as usize, self.h, self.tz <= 3);
+        if self.shark_key == Some(key) {
+            return;
+        }
+        self.shark_key = Some(key);
+        self.shark = if self.tz <= 3 { SharkRun::plan(self.tt, self.pano, self.h as f32, self.refw, self.unit()) } else { None };
     }
 
     pub fn set_palette(&mut self, pal: Palette) {
@@ -352,6 +372,7 @@ impl World {
         self.refw = h as f32 * 16.0 / 9.0;
         self.px_scale = scale_for(self.refw);
         self.populate();
+        self.refresh_shark();
     }
 
     /// The whale schedule is a pure function of the clock: every 5-minute window may hold one pass.
@@ -403,6 +424,7 @@ impl World {
         self.reef = reef;
         self.night = night;
         self.tz = (zf as usize).min(5);
+        self.refresh_shark();
         if self.tz != self.gen_zone || self.reef != self.gen_reef {
             self.populate();
         }
@@ -412,6 +434,9 @@ impl World {
         }
         if self.bloom_level() > 0.35 {
             spotted.push("bloom");
+        }
+        if self.shark.as_ref().is_some_and(|s| s.envelope(self.tt) > 0.2) {
+            spotted.push("shark");
         }
         let active = self.whale_state(self.tt).is_some();
         if active {
@@ -496,6 +521,9 @@ impl World {
                 self.draw_whale(f, bot);
             }
             self.draw_fish(f, bot, slot);
+            if let Some(sh) = self.shark.as_ref().filter(|sh| slot_of(sh.z) == slot) {
+                sh.draw(f, self.tt, self.off, (bot, self.fog_z(sh.z)), self.t);
+            }
             if slot == 2 {
                 self.draw_bloom(f);
             }
@@ -597,13 +625,27 @@ impl World {
         (x.rem_euclid(len) - self.margin()) as f32 - self.off
     }
 
+    /// Where the fish is at time `t`, in panorama x (unwrapped) and y: its route plus offset, shoved
+    /// away from the shark when one is near.
+    fn fish_xy(&self, fish: &Fish, t: f64) -> (f64, f32) {
+        let (x, y) = self.paths[fish.path].pos(t - fish.delay as f64);
+        let (mut x, mut y) = (x + fish.ox as f64, y as f32 + fish.oy);
+        if let Some(sh) = &self.shark {
+            let px = (x.rem_euclid(self.track_len()) - self.margin()) as f32;
+            let (dx, dy) = sh.push(t, px, y);
+            x += dx as f64;
+            y += dy;
+        }
+        (x, y)
+    }
+
     fn fish_pose(&self, fish: &Fish) -> Pose {
-        let p = &self.paths[fish.path];
-        let t = self.tt - fish.delay as f64;
-        let (x, y) = p.pos(t);
-        let (vx, vy) = p.vel(t);
+        let t = self.tt;
+        let (x, y) = self.fish_xy(fish, t);
+        // Heading from where the fish will be a moment from now, so a fish bolting from the shark faces away.
+        let (a, b) = (self.fish_xy(fish, t - 0.25), self.fish_xy(fish, t + 0.25));
         let bob = (self.t * fish.freq + fish.phase).sin() * fish.amp;
-        Pose { x: self.screen_x(x + fish.ox as f64), y: y as f32 + fish.oy + bob, vx: vx as f32, vy: vy as f32 }
+        Pose { x: self.screen_x(x), y: y + bob, vx: ((b.0 - a.0) / 0.5) as f32, vy: (b.1 - a.1) / 0.5 }
     }
 
     /// Soft elliptical shadows on the seabed under fish swimming close to it.
@@ -762,7 +804,7 @@ impl World {
             let floor = self.floor_y(slot, (fx + len as f32 * 0.5).clamp(0.0, self.w as f32 - 1.0));
             let y = pose.y.min(floor - len as f32 * 0.55);
             // Nose up or down with the heading (a vertical shear in the sprite), capped so a turn never rolls the fish.
-            let pitch = pose.vy.atan2(pose.vx.abs().max(0.001)).clamp(-0.7, 0.7);
+            let pitch = pose.vy.atan2(pose.vx.abs().max(0.001)).clamp(-0.5, 0.5);
             // Distant fish lose their dark outline: at that size it only muddies them.
             let outline = len >= 14 && fish.z < 0.65;
             sprites::draw_fish(f, sp.kind, fx as i32, y as i32, len, pose.vx < 0.0, pitch, self.t * fish.freq + fish.phase, fog, outline);
@@ -966,6 +1008,54 @@ mod tests {
             assert!((pose.y - (y as f32 + m.oy)).abs() <= m.amp + 1e-3, "y follows the route within its bob");
             assert!(pose.y > 0.0 && pose.y < 180.0 * 0.85, "y = {}", pose.y);
         }
+    }
+
+    /// A world standing in the middle of a shark visit.
+    fn with_shark() -> World {
+        let first = (1_700_000_000.0 / shark::WINDOW).floor();
+        for k in 0..40 {
+            let t = (first + k as f64) * shark::WINDOW + 1.0;
+            let w = World::new(640, 360, Layout::single(640), 1.0, 25, false).at(t);
+            let Some(sh) = &w.shark else { continue };
+            let mid = (0..shark::WINDOW as i32).map(|s| t + s as f64).find(|t| sh.envelope(*t) >= 1.0).expect("a visit reaches full strength");
+            return World::new(640, 360, Layout::single(640), 1.0, 25, false).at(mid + 3.0);
+        }
+        panic!("no shark in 40 windows");
+    }
+
+    #[test]
+    fn a_shark_scatters_nearby_fish_and_is_announced_once() {
+        let mut w = with_shark();
+        let with: Vec<_> = w.fishes.iter().map(|f| w.fish_xy(f, w.tt)).collect();
+        let shark = w.shark.take().unwrap();
+        let without: Vec<_> = w.fishes.iter().map(|f| w.fish_xy(f, w.tt)).collect();
+        let (hx, hy) = shark.head(w.tt);
+        let (mut moved, mut still) = (0, 0);
+        for ((a, b), _f) in with.iter().zip(&without).zip(&w.fishes) {
+            let shift = ((a.0 - b.0) as f32).hypot(a.1 - b.1);
+            let px = (b.0.rem_euclid(w.track_len()) - w.margin()) as f32;
+            let d = (px - hx).hypot(b.1 - hy);
+            if d < shark_reach(&shark) * 0.6 {
+                assert!(shift > 1.0, "a fish {d:.0}px from the head should flee, moved {shift:.2}");
+                moved += 1;
+            } else if d > shark_reach(&shark) {
+                assert!(shift < 1e-3, "a fish {d:.0}px away must not move");
+                still += 1;
+            }
+        }
+        assert!(moved + still > 0);
+        w.shark = Some(shark);
+        let mut seen = 0;
+        for _ in 0..3 {
+            seen += w.update(0.03, 1.0, 25, false).iter().filter(|e| **e == WorldEvent::Spotted("shark")).count();
+        }
+        assert_eq!(seen, 1);
+    }
+
+    #[test]
+    fn no_shark_in_the_deep() {
+        let w = World::new(640, 360, Layout::single(640), 4.5, 5, false).at(1_700_000_000.0);
+        assert!(w.shark.is_none());
     }
 
     #[test]

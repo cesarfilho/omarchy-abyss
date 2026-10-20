@@ -7,6 +7,7 @@ mod gfx;
 mod ipc;
 mod path;
 mod power;
+mod shark;
 mod sprites;
 mod state;
 mod theme;

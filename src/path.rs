@@ -41,10 +41,20 @@ fn sample(v: &[f64], d: f64, j: i64) -> f64 {
 impl Path {
     /// `speed` in pixels per second; the fish stays within `ymid ± r` vertically.
     pub fn new(g: &mut Gen, speed: f64, ymid: f64, r: f64) -> Self {
+        Self::build(g, speed, ymid, r, 1.0, CONE)
+    }
+
+    /// A long, stiff animal (a shark): gentle turns that never fold the body onto itself, and a
+    /// start heading close to level.
+    pub fn calm(g: &mut Gen, speed: f64, ymid: f64, r: f64) -> Self {
+        Self::build(g, speed, ymid, r, 0.3, 25.0 * TAU / 360.0)
+    }
+
+    fn build(g: &mut Gen, speed: f64, ymid: f64, r: f64, agility: f64, cone: f64) -> Self {
         let mut f = |lo: f64, hi: f64| g.range(lo as f32, hi as f32) as f64;
         let side = if f(0.0, 1.0) < 0.5 { 0.0 } else { std::f64::consts::PI };
-        let theta0 = side + f(-CONE, CONE);
-        let (a1, a2, a3) = (f(0.4, 1.4), f(0.2, 0.9), f(0.1, 0.35));
+        let theta0 = side + f(-cone, cone);
+        let (a1, a2, a3) = (f(0.4, 1.4) * agility, f(0.2, 0.9) * agility, f(0.1, 0.35) * agility * agility);
         let (k1, k2, k3, k4) = (f(1.0, 3.99).floor(), f(3.0, 7.99).floor(), f(12.0, 30.99).floor(), f(4.0, 9.99).floor());
         let (p1, p2, p3, p4) = (f(0.0, TAU), f(0.0, TAU), f(0.0, TAU), f(0.0, TAU));
         let x0 = f(0.0, 1.0e6);
