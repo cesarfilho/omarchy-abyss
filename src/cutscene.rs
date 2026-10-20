@@ -61,6 +61,16 @@ pub fn summary_text(sess: &Session) -> String {
     if sess.reef_gain > 0 {
         lines.push(format!("{} coral(is) novo(s) no recife", sess.reef_gain));
     }
+    for id in &sess.discoveries {
+        if let Some(c) = state::creature(id) {
+            lines.push(format!("◆ {}", c.name));
+        }
+    }
+    for id in &sess.quests_done {
+        if let Some(q) = state::quest(id) {
+            lines.push(format!("✔ {}", q.name));
+        }
+    }
     for id in &sess.trophies {
         if let Some(t) = state::trophy(id) {
             lines.push(format!("★ {}", t.name));

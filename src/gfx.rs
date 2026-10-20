@@ -247,3 +247,71 @@ impl Presenter {
         out.flush()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sextant_masks_map_to_distinct_glyphs() {
+        let mut seen = std::collections::HashSet::new();
+        for m in 0..=63u8 {
+            assert!(seen.insert(sextant(m)), "mask {m} collides");
+        }
+        assert_eq!(sextant(0), ' ');
+        assert_eq!(sextant(63), '█');
+        assert_eq!(sextant(21), '▌');
+        assert_eq!(sextant(42), '▐');
+        assert_eq!(sextant(1), '\u{1FB00}', "upper-left sub-pixel only");
+        assert_eq!(sextant(62), '\u{1FB3B}', "everything but the upper-left");
+    }
+
+    #[test]
+    fn split_two_separates_light_from_dark() {
+        let (dark, light) = ([10.0; 3], [200.0; 3]);
+        // upper-left and middle-right are light
+        let px = [light, dark, dark, light, dark, dark];
+        let (mask, hi, lo) = split_two(&px);
+        assert_eq!(mask, 0b001001);
+        assert_eq!((hi, lo), ([200; 3], [10; 3]));
+    }
+
+    fn present(f: &Frame, o: &Overlay) -> String {
+        let mut out = Vec::new();
+        Presenter::new(f.w / 2, f.h / 4).present(f, o, &mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn flat_colour_becomes_blank_cells_and_text_gets_a_plate() {
+        let mut f = Frame::new(4, 8);
+        for y in 0..8 {
+            for x in 0..4 {
+                f.set(x, y, [20, 40, 80]);
+            }
+        }
+        let flat = present(&f, &Overlay::new(2, 2));
+        assert!(!flat.contains('█') && flat.contains(' '));
+        let mut o = Overlay::new(2, 2);
+        o.text(0, 0, "A", [255, 255, 255]);
+        let with_text = present(&f, &o);
+        assert!(with_text.contains('A'));
+        assert!(with_text.contains("48;2;7;14;28"), "plate is the local average colour at 35%");
+    }
+
+    #[test]
+    fn only_changed_cells_are_rewritten() {
+        let mut f = Frame::new(4, 8);
+        let mut p = Presenter::new(2, 2);
+        let o = Overlay::new(2, 2);
+        let mut first = Vec::new();
+        p.present(&f, &o, &mut first).unwrap();
+        let mut again = Vec::new();
+        p.present(&f, &o, &mut again).unwrap();
+        assert!(again.len() < first.len() / 2, "an unchanged frame writes (almost) nothing");
+        f.set(0, 0, [255, 0, 0]);
+        let mut changed = Vec::new();
+        p.present(&f, &o, &mut changed).unwrap();
+        assert!(String::from_utf8(changed).unwrap().contains("\x1b[1;1H"));
+    }
+}

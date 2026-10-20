@@ -10,10 +10,13 @@ pub enum Kind {
     Tang,
     Silver,
     Angler,
+    Lantern,
+    Viper,
 }
 
 /// A species and the zones where it can show up. `len` is the body length as a fraction of the screen width.
 pub struct Species {
+    pub id: &'static str,
     pub kind: Kind,
     pub len: f32,
     pub zones: (usize, usize),
@@ -22,10 +25,12 @@ pub struct Species {
 }
 
 pub const SPECIES: &[Species] = &[
-    Species { kind: Kind::Clown, len: 0.038, zones: (0, 2), speed: (10.0, 18.0), school: 1 },
-    Species { kind: Kind::Tang, len: 0.04, zones: (0, 1), speed: (12.0, 22.0), school: 4 },
-    Species { kind: Kind::Silver, len: 0.056, zones: (1, 3), speed: (18.0, 30.0), school: 3 },
-    Species { kind: Kind::Angler, len: 0.06, zones: (4, 5), speed: (6.0, 10.0), school: 1 },
+    Species { id: "clown", kind: Kind::Clown, len: 0.038, zones: (0, 2), speed: (10.0, 18.0), school: 1 },
+    Species { id: "tang", kind: Kind::Tang, len: 0.04, zones: (0, 1), speed: (12.0, 22.0), school: 4 },
+    Species { id: "silver", kind: Kind::Silver, len: 0.056, zones: (1, 3), speed: (18.0, 30.0), school: 3 },
+    Species { id: "lantern", kind: Kind::Lantern, len: 0.034, zones: (2, 4), speed: (9.0, 15.0), school: 4 },
+    Species { id: "angler", kind: Kind::Angler, len: 0.06, zones: (4, 5), speed: (6.0, 10.0), school: 1 },
+    Species { id: "viper", kind: Kind::Viper, len: 0.07, zones: (3, 5), speed: (8.0, 13.0), school: 1 },
 ];
 
 struct Style {
@@ -45,6 +50,8 @@ fn style(kind: Kind) -> Style {
         Kind::Clown => Style { body_h: 0.20, body_c: 0.62, body_r: 0.34, tail: 0.26, flare: 1.15, dorsal: 0.07, top: [250, 118, 22], belly: [255, 168, 70], fin: [232, 96, 18] },
         Kind::Tang => Style { body_h: 0.26, body_c: 0.60, body_r: 0.37, tail: 0.27, flare: 0.95, dorsal: 0.12, top: [28, 82, 196], belly: [76, 150, 246], fin: [250, 206, 40] },
         Kind::Silver => Style { body_h: 0.15, body_c: 0.58, body_r: 0.40, tail: 0.24, flare: 1.5, dorsal: 0.06, top: [92, 118, 146], belly: [226, 236, 242], fin: [150, 168, 184] },
+        Kind::Lantern => Style { body_h: 0.22, body_c: 0.60, body_r: 0.36, tail: 0.24, flare: 1.0, dorsal: 0.07, top: [26, 66, 88], belly: [92, 168, 178], fin: [58, 118, 140] },
+        Kind::Viper => Style { body_h: 0.13, body_c: 0.58, body_r: 0.40, tail: 0.22, flare: 0.6, dorsal: 0.09, top: [20, 24, 40], belly: [62, 72, 98], fin: [30, 34, 58] },
         Kind::Angler => Style { body_h: 0.34, body_c: 0.60, body_r: 0.36, tail: 0.20, flare: 0.8, dorsal: 0.05, top: [44, 36, 60], belly: [86, 72, 100], fin: [58, 48, 76] },
     }
 }
@@ -146,6 +153,22 @@ fn fish_cell(kind: Kind, st: &Style, s: f32, yy: f32, px: i32, py: i32) -> Cell 
         Kind::Silver => {
             if yy.abs() < 0.008 && s > 0.3 && s < 0.88 {
                 c = shade(c, 0.7);
+            }
+        }
+        Kind::Lantern => {
+            // Row of glowing photophores along the belly.
+            if v > 0.4 && v < 0.85 && s > 0.3 && s < 0.85 && px % 4 == 0 && py % 2 == 0 {
+                return Some(([130, 255, 235], 1.0, true));
+            }
+        }
+        Kind::Viper => {
+            if v > 0.55 && v < 0.8 && s > 0.25 && s < 0.9 && px % 5 == 0 {
+                return Some(([120, 255, 200], 1.0, true));
+            }
+            if s > 0.76 && (yy - 0.03).abs() < 0.02 {
+                c = [10, 8, 16];
+            } else if s > 0.76 && s < 0.99 && (yy - 0.03).abs() < 0.055 && (px % 4) < 2 {
+                c = [236, 236, 226];
             }
         }
         Kind::Angler => {

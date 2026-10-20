@@ -4,7 +4,8 @@
 use std::collections::VecDeque;
 
 use crate::gfx::{Overlay, Rgb};
-use crate::state::{self, GameEvent, ZONE_NAMES};
+use crate::state::{self, GameEvent, Season, ZONE_NAMES};
+use crate::theme::Palette;
 
 const SLIDE_IN: f32 = 0.5;
 const TYPE: f32 = 0.9;
@@ -16,11 +17,6 @@ const TOTAL: f32 = SLIDE_IN + TYPE + HOLD + SLIDE_OUT;
 const PLATE_ROWS: i32 = 6;
 const REST_ROW: i32 = 1;
 
-const GOLD: Rgb = [255, 220, 120];
-const CYAN: Rgb = [140, 230, 246];
-const CREAM: Rgb = [235, 240, 235];
-const DIM: Rgb = [160, 190, 210];
-
 struct Toast {
     colors: [Rgb; 4],
     lines: [String; 4],
@@ -30,6 +26,7 @@ struct Toast {
 pub struct Toasts {
     queue: VecDeque<Toast>,
     current: Option<Toast>,
+    pal: Palette,
 }
 
 fn ease_out(p: f32) -> f32 {
@@ -37,16 +34,42 @@ fn ease_out(p: f32) -> f32 {
 }
 
 impl Toasts {
-    pub fn new() -> Self {
-        Self { queue: VecDeque::new(), current: None }
+    pub fn new(pal: Palette) -> Self {
+        Self { queue: VecDeque::new(), current: None, pal }
+    }
+
+    pub fn push_season(&mut self, s: &Season) {
+        let p = self.pal;
+        self.queue.push_back(Toast {
+            colors: [p.cyan, p.text, p.dim, p.gold],
+            lines: ["≈ EVENTO DE TEMPORADA ≈".into(), s.name.to_uppercase(), s.desc.to_string(), format!("XP ×{}", state::SEASON_XP_BOOST)],
+            t: 0.0,
+        });
     }
 
     pub fn push(&mut self, ev: &GameEvent) {
+        let (gold, cyan, cream, dim) = (self.pal.gold, self.pal.cyan, self.pal.text, self.pal.dim);
         let toast = match ev {
+            GameEvent::Discovery(id) => {
+                let Some(c) = state::creature(id) else { return };
+                Toast {
+                    colors: [cyan, cream, dim, cyan],
+                    lines: ["◆ NOVA CRIATURA ◆".into(), c.name.to_uppercase(), c.desc.to_string(), format!("+{} PONTOS", state::DISCOVERY_POINTS)],
+                    t: 0.0,
+                }
+            }
+            GameEvent::Quest(id) => {
+                let Some(q) = state::quest(id) else { return };
+                Toast {
+                    colors: [gold, cream, dim, gold],
+                    lines: ["✔ MISSÃO CUMPRIDA ✔".into(), q.name.to_uppercase(), q.desc.to_string(), format!("+{} PONTOS", state::QUEST_POINTS)],
+                    t: 0.0,
+                }
+            }
             GameEvent::Trophy(id) => {
                 let Some(t) = state::trophy(id) else { return };
                 Toast {
-                    colors: [GOLD, CREAM, DIM, GOLD],
+                    colors: [gold, cream, dim, gold],
                     lines: ["★ TROFÉU DESBLOQUEADO ★".into(), t.name.to_uppercase(), t.desc.to_string(), "+100 PONTOS".into()],
                     t: 0.0,
                 }
@@ -55,7 +78,7 @@ impl Toasts {
                 let zone = ((*l as usize) / 3).min(5);
                 let depth = state::Save { xp: state::xp_at(*l), ..Default::default() }.depth_m();
                 Toast {
-                    colors: [CYAN, CREAM, DIM, CYAN],
+                    colors: [cyan, cream, dim, cyan],
                     lines: ["▲ SUBIU DE NÍVEL ▲".into(), format!("NÍVEL {l}"), ZONE_NAMES[zone].to_uppercase(), format!("{depth} M DE PROFUNDIDADE")],
                     t: 0.0,
                 }
@@ -78,6 +101,7 @@ impl Toasts {
 
     pub fn draw(&self, o: &mut Overlay, cols: usize) {
         let Some(c) = &self.current else { return };
+        let cream = self.pal.text;
         let widest = c.lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
         let width = widest + 6;
         let left = cols.saturating_sub(width) / 2;
@@ -100,7 +124,7 @@ impl Toasts {
         let row_at = |i: i32| -> Option<usize> { usize::try_from(top + i).ok() };
         for i in [0, PLATE_ROWS - 1] {
             if let Some(r) = row_at(i) {
-                o.text(left, r, &blank, CREAM);
+                o.text(left, r, &blank, cream);
             }
         }
         for (i, line) in c.lines.iter().enumerate() {
@@ -119,74 +143,5 @@ impl Toasts {
                 o.text(left, r, &text, c.colors[i]);
             }
         }
-    }
-}
-
-/// Shares events between the screensaver instances (one per monitor): only the first instance
-/// earns XP, so it publishes what happened and the others replay it as banners.
-fn events_path() -> std::path::PathBuf {
-    state::state_dir().join("events.json")
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
-}
-
-pub struct Feed {
-    last_seq: u64,
-}
-
-impl Feed {
-    pub fn new() -> Self {
-        // Accept events from just before this instance started (the session-start trophy).
-        Self { last_seq: now_ms().saturating_sub(3000) }
-    }
-
-    pub fn publish(&mut self, ev: &GameEvent) {
-        let mut list: Vec<serde_json::Value> =
-            std::fs::read_to_string(events_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-        let seq = now_ms().max(self.last_seq + 1);
-        self.last_seq = seq;
-        let (kind, value) = match ev {
-            GameEvent::Trophy(id) => ("trophy", id.to_string()),
-            GameEvent::LevelUp(l) => ("level", l.to_string()),
-        };
-        list.push(serde_json::json!({ "seq": seq, "kind": kind, "value": value }));
-        let keep = list.len().saturating_sub(20);
-        list.drain(..keep);
-        let _ = std::fs::create_dir_all(state::state_dir());
-        let tmp = state::state_dir().join(format!("events.tmp{}", std::process::id()));
-        if std::fs::write(&tmp, serde_json::Value::Array(list).to_string()).is_ok() {
-            let _ = std::fs::rename(&tmp, events_path());
-        }
-    }
-
-    /// New events published by another instance since the last poll.
-    pub fn poll(&mut self) -> Vec<GameEvent> {
-        let list: Vec<serde_json::Value> =
-            std::fs::read_to_string(events_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-        let mut out = Vec::new();
-        for e in list {
-            let seq = e["seq"].as_u64().unwrap_or(0);
-            if seq <= self.last_seq {
-                continue;
-            }
-            self.last_seq = seq;
-            let value = e["value"].as_str().unwrap_or("");
-            match e["kind"].as_str() {
-                Some("trophy") => {
-                    if let Some(t) = state::trophy(value) {
-                        out.push(GameEvent::Trophy(t.id));
-                    }
-                }
-                Some("level") => {
-                    if let Ok(l) = value.parse() {
-                        out.push(GameEvent::LevelUp(l));
-                    }
-                }
-                _ => {}
-            }
-        }
-        out
     }
 }

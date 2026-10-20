@@ -1,5 +1,6 @@
 use crate::gfx::{Frame, Rgb, lerp};
 use crate::sprites::{self, SPECIES};
+use crate::theme::Palette;
 
 /// (top, bottom) water colour per zone.
 const ZONE_WATER: [(Rgb, Rgb); 6] = [
@@ -43,6 +44,8 @@ const BLOOM_WINDOW: f64 = 240.0;
 #[derive(Debug, PartialEq)]
 pub enum WorldEvent {
     WhalePassed,
+    /// A creature (bestiary id) is on screen.
+    Spotted(&'static str),
 }
 
 /// Where this screen sits in the shared panorama, in frame pixels. Every monitor runs the same
@@ -165,6 +168,14 @@ pub struct World {
     whale_active: bool,
     gen_zone: usize,
     gen_reef: u32,
+    /// Target zone from the save (the world builds its population from this, not from the eased `zf`).
+    tz: usize,
+    /// Fixed clock for tests and snapshots; the wall clock otherwise.
+    fixed: Option<f64>,
+    pal: Palette,
+    season: Option<&'static str>,
+    present: Vec<&'static str>,
+    announced: Vec<&'static str>,
 }
 
 impl World {
@@ -189,11 +200,45 @@ impl World {
             whale_active: false,
             gen_zone: usize::MAX,
             gen_reef: u32::MAX,
+            tz: (zf as usize).min(5),
+            fixed: None,
+            pal: Palette::classic(),
+            season: None,
+            present: Vec::new(),
+            announced: Vec::new(),
         };
         world.px_scale = scale_for(world.refw);
         world.t = (world.tt % 100_000.0) as f32;
         world.populate();
         world
+    }
+
+    /// Freezes the world at wall-clock second `t` (tests and snapshots).
+    pub fn at(mut self, t: f64) -> Self {
+        self.fixed = Some(t);
+        self.tt = t;
+        self.t = (t % 100_000.0) as f32;
+        self.populate();
+        self
+    }
+
+    fn now(&self) -> f64 {
+        self.fixed.unwrap_or_else(now_secs)
+    }
+
+    pub fn set_palette(&mut self, pal: Palette) {
+        self.pal = pal;
+    }
+
+    pub fn set_season(&mut self, season: Option<&'static str>) {
+        if self.season != season {
+            self.season = season;
+            self.populate();
+        }
+    }
+
+    fn is_season(&self, id: &str) -> bool {
+        self.season == Some(id)
     }
 
     /// Screen-proportional speed unit: movement scales with the frame like the creatures do.
@@ -219,7 +264,7 @@ impl World {
 
     /// Builds every moving thing from fixed seeds, so all monitors get the identical world.
     fn populate(&mut self) {
-        self.gen_zone = self.zone();
+        self.gen_zone = self.tz;
         self.gen_reef = self.reef;
         self.fishes.clear();
         let mut g = Gen(mix(SEED, 100 + self.gen_zone as u64));
@@ -230,6 +275,7 @@ impl World {
             .filter(|(_, s)| (s.zones.0..=s.zones.1).contains(&self.gen_zone))
             .map(|(i, _)| i)
             .collect();
+        self.present = ok.iter().map(|&i| SPECIES[i].id).collect();
         let len_track = self.track_len();
         while !ok.is_empty() && self.fishes.len() < target {
             let species = ok[g.below(ok.len() as u32) as usize];
@@ -301,9 +347,10 @@ impl World {
         if self.zf >= 4.0 {
             return None;
         }
+        let odds = if self.is_season("oceans") { 90 } else { 40 };
         let k = (tt / WHALE_WINDOW).floor();
         let r = mix(SEED, 300 + k as u64);
-        if r % 100 >= 40 {
+        if r % 100 >= odds {
             return None;
         }
         let len = (self.refw * 0.2).clamp(34.0, 130.0);
@@ -338,15 +385,32 @@ impl World {
 
     pub fn update(&mut self, _dt: f32, zf: f32, reef: u32, night: bool) -> Vec<WorldEvent> {
         let mut events = Vec::new();
-        self.tt = now_secs();
+        self.tt = self.now();
         self.t = (self.tt % 100_000.0) as f32;
         self.zf += (zf - self.zf) * 0.02;
         self.reef = reef;
         self.night = night;
-        if self.zone() != self.gen_zone || self.reef != self.gen_reef {
+        self.tz = (zf as usize).min(5);
+        if self.tz != self.gen_zone || self.reef != self.gen_reef {
             self.populate();
         }
+        let mut spotted: Vec<&'static str> = self.present.clone();
+        if self.jelly_count() > 0 {
+            spotted.push("jelly");
+        }
+        if self.bloom_level() > 0.35 {
+            spotted.push("bloom");
+        }
         let active = self.whale_state(self.tt).is_some();
+        if active {
+            spotted.push("whale");
+        }
+        for id in spotted {
+            if !self.announced.contains(&id) {
+                self.announced.push(id);
+                events.push(WorldEvent::Spotted(id));
+            }
+        }
         if self.whale_active && !active {
             events.push(WorldEvent::WhalePassed);
         }
@@ -358,10 +422,40 @@ impl World {
         let i = self.zone();
         let j = (i + 1).min(5);
         let t = self.zf - i as f32;
-        (
-            lerp(ZONE_WATER[i].0, ZONE_WATER[j].0, t),
-            lerp(ZONE_WATER[i].1, ZONE_WATER[j].1, t),
-        )
+        let (top, bot) = (lerp(ZONE_WATER[i].0, ZONE_WATER[j].0, t), lerp(ZONE_WATER[i].1, ZONE_WATER[j].1, t));
+        match self.pal.water {
+            // The theme colours the shallows lightly and the deep more, since the deep is nearly black anyway.
+            Some((t_top, t_bot)) => (lerp(top, t_top, 0.18), lerp(bot, t_bot, 0.3)),
+            None => (top, bot),
+        }
+    }
+
+    fn jelly_count(&self) -> usize {
+        if self.is_season("halloween") {
+            5
+        } else if self.zone() >= 2 {
+            self.zone()
+        } else {
+            0
+        }
+    }
+
+    /// Bioluminescence: seasonal and night/deep baseline plus the scheduled bloom.
+    fn bloom_level(&self) -> f32 {
+        let deep = (self.zf / 3.0).min(1.0);
+        let mut base = if self.night { 0.25 } else { 0.0 } + deep * 0.2;
+        if self.is_season("halloween") || self.is_season("xmas") {
+            base = base.max(0.55);
+        }
+        (self.bloom_strength() + base).min(1.0)
+    }
+
+    fn glow_color(&self, hue: f32) -> Rgb {
+        match self.season {
+            Some("halloween") => lerp([255, 140, 30], [170, 70, 230], hue),
+            Some("xmas") => [[255, 70, 70], [80, 230, 110], [255, 215, 90]][(hue * 3.0) as usize % 3],
+            _ => lerp(self.pal.glow.0, self.pal.glow.1, hue),
+        }
     }
 
     fn fog(&self) -> f32 {
@@ -628,7 +722,7 @@ impl World {
     }
 
     fn draw_jellies(&self, f: &mut Frame, bot: Rgb, slot: usize) {
-        let target = if self.zone() >= 2 { 2 + self.zone().saturating_sub(2) } else { 0 };
+        let target = self.jelly_count();
         for j in self.jellies.iter().take(target).filter(|j| slot_of(j.z) == slot) {
             let fog = (bot, self.fog_z(j.z) * 0.6);
             let len = (self.refw * 0.036 * scale_z(j.z)) as i32;
@@ -642,9 +736,7 @@ impl World {
     }
 
     fn draw_bloom(&self, f: &mut Frame) {
-        let deep = (self.zf / 3.0).min(1.0);
-        let base = if self.night { 0.25 } else { 0.0 } + deep * 0.2;
-        let a = (self.bloom_strength() + base).min(1.0);
+        let a = self.bloom_level();
         if a <= 0.01 {
             return;
         }
@@ -655,7 +747,7 @@ impl World {
                 continue;
             }
             let y = g.y * self.h as f32 + (self.t * 0.3 + g.phase * 2.0).cos() * 3.0;
-            let col = lerp([70, 255, 200], [90, 160, 255], g.hue);
+            let col = self.glow_color(g.hue);
             let k = a * pulse;
             let sc = self.px_scale;
             let (x, y) = (x as i32, y as i32);
@@ -706,5 +798,98 @@ impl World {
         let fin_x = wh.x - back * a * 0.2;
         f.line(fin_x as i32, (y0 + b * 0.5) as i32, (fin_x + back * a * 0.25) as i32, (y0 + b * 1.4) as i32, back_col);
         f.set((wh.x - back * a * 0.62) as i32, (y0 + b * 0.05) as i32, dark);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const T: f64 = 1_700_000_123.0;
+
+    fn frame_of(w: usize, h: usize, layout: Layout, zone: f32) -> Frame {
+        let world = World::new(w, h, layout, zone, 10, false).at(T);
+        let mut f = Frame::new(w, h);
+        world.draw(&mut f);
+        f
+    }
+
+    fn same(a: &Frame, b: &Frame) -> bool {
+        a.w == b.w && a.h == b.h && (0..a.h).all(|y| (0..a.w).all(|x| a.at(x, y) == b.at(x, y)))
+    }
+
+    #[test]
+    fn same_clock_same_picture() {
+        for zone in [0.5, 2.5, 4.5] {
+            let a = frame_of(160, 90, Layout::single(160), zone);
+            let b = frame_of(160, 90, Layout::single(160), zone);
+            assert!(same(&a, &b), "zone {zone}: two instances must draw identical frames");
+        }
+    }
+
+    #[test]
+    fn the_picture_moves_with_the_clock() {
+        let w1 = World::new(160, 90, Layout::single(160), 1.0, 10, false).at(T);
+        let w2 = World::new(160, 90, Layout::single(160), 1.0, 10, false).at(T + 30.0);
+        let (mut a, mut b) = (Frame::new(160, 90), Frame::new(160, 90));
+        w1.draw(&mut a);
+        w2.draw(&mut b);
+        assert!(!same(&a, &b));
+    }
+
+    /// Two monitors side by side must show the same sea as one monitor twice as wide.
+    #[test]
+    fn two_monitors_form_one_panorama() {
+        let (w, h) = (160, 90);
+        for zone in [0.5, 2.5] {
+            let wide = frame_of(2 * w, h, Layout::single(2 * w), zone);
+            let left = frame_of(w, h, Layout { pano_w: 2 * w, off: 0 }, zone);
+            let right = frame_of(w, h, Layout { pano_w: 2 * w, off: w }, zone);
+            let total = (2 * w * h) as f64;
+            let mut diff = 0usize;
+            for y in 0..h {
+                for x in 0..w {
+                    diff += (left.at(x, y) != wide.at(x, y)) as usize;
+                    diff += (right.at(x, y) != wide.at(x + w, y)) as usize;
+                }
+            }
+            // Sprites cut at the seam may differ by a few pixels of edge clamping; the scene must not.
+            assert!((diff as f64) / total < 0.01, "zone {zone}: {diff} of {total} pixels differ across the seam");
+        }
+    }
+
+    #[test]
+    fn population_follows_the_target_zone_not_the_eased_one() {
+        let mut w = World::new(160, 90, Layout::single(160), 0.2, 0, false).at(T);
+        assert!(w.present.contains(&"clown") && !w.present.contains(&"angler"));
+        w.update(0.03, 4.5, 0, false);
+        assert!(w.present.contains(&"angler"), "a new target zone repopulates at once");
+    }
+
+    #[test]
+    fn creatures_are_announced_once() {
+        let mut w = World::new(160, 90, Layout::single(160), 1.5, 5, false).at(T);
+        let first: Vec<_> = w.update(0.03, 1.5, 5, false);
+        assert!(first.contains(&WorldEvent::Spotted("silver")));
+        assert!(w.update(0.03, 1.5, 5, false).iter().all(|e| !matches!(e, WorldEvent::Spotted(_))));
+    }
+
+    #[test]
+    fn every_species_has_a_bestiary_entry_inside_its_zones() {
+        for sp in SPECIES {
+            let c = crate::state::creature(sp.id).unwrap_or_else(|| panic!("{} missing from the bestiary", sp.id));
+            assert_eq!(c.zones, sp.zones, "{}", sp.id);
+        }
+    }
+
+    #[test]
+    fn seasons_change_the_scene() {
+        let plain = frame_of(160, 90, Layout::single(160), 1.0);
+        let mut w = World::new(160, 90, Layout::single(160), 1.0, 10, false).at(T);
+        w.set_season(Some("halloween"));
+        let mut f = Frame::new(160, 90);
+        w.draw(&mut f);
+        assert!(!same(&plain, &f), "halloween adds jellies and orange plankton even in the shallows");
+        assert_eq!(w.jelly_count(), 5);
     }
 }

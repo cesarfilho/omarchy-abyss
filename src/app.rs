@@ -15,14 +15,17 @@ use std::{
 };
 
 use crate::{
+    config::Config,
     cutscene,
-    toast::{Feed, Toasts},
     gfx::{Frame, Overlay, Presenter},
-    state::{self, Save, Session, ZONE_NAMES},
+    ipc::{self, Client, Request, Server},
+    power::Power,
+    state::{self, GameEvent, Save, Session, ZONE_NAMES},
+    theme::Palette,
+    toast::Toasts,
     world::{Layout, World, WorldEvent},
 };
 
-const FRAME: Duration = Duration::from_millis(33);
 const SCREENSAVER_CLASS: &str = "org.omarchy.screensaver";
 
 pub struct Options {
@@ -138,40 +141,63 @@ fn layout(monitor: &Option<String>, frame_w: usize) -> Layout {
     Layout { pano_w: (total * k) as usize, off: ((me["x"].as_f64().unwrap_or(0.0) - min_x) * k).max(0.0) as usize }
 }
 
-fn hud(overlay: &mut Overlay, save: &Save) {
+fn hud(overlay: &mut Overlay, save: &Save, pal: &Palette) {
     let zone = save.zone();
     let bar_len = 14;
     let filled = (save.progress() * bar_len as f64).round() as usize;
     let bar: String = (0..bar_len).map(|i| if i < filled { '█' } else { '░' }).collect();
-    let cream = [235, 240, 235];
-    let dim = [160, 190, 210];
-    let gold = [255, 220, 120];
-    overlay.text(1, 0, &format!(" Nv {} · {} · {} m ", save.level(), ZONE_NAMES[zone], save.depth_m()), cream);
-    overlay.text(1, 1, &format!(" {} {:.0}/{:.0} XP ", bar, save.xp, state::xp_at(save.level() + 1)), dim);
+    overlay.text(1, 0, &format!(" Nv {} · {} · {} m ", save.level(), ZONE_NAMES[zone], save.depth_m()), pal.text);
+    overlay.text(1, 1, &format!(" {} {:.0}/{:.0} XP ", bar, save.xp, state::xp_at(save.level() + 1)), pal.dim);
     overlay.text(
         1,
         2,
         &format!(" ★ {}/{} · {} pts · série {} d ", save.trophies.len(), state::TROPHIES.len(), save.points, save.streak),
-        gold,
+        pal.gold,
     );
 }
 
-fn other_instances() -> Vec<u32> {
-    let me = std::process::id();
-    Command::new("pgrep")
-        .args(["-x", "abyss"])
-        .output()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .filter_map(|l| l.trim().parse::<u32>().ok())
-                .filter(|&p| p != me)
-                .collect()
-        })
-        .unwrap_or_default()
+/// Restores the terminal before the default message prints (it would be lost on the alternate
+/// screen) and leaves a note in `crash.log`, so a crash never leaves a hidden pointer or a raw tty.
+fn install_panic_hook(hide_pointer: bool) {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let mut out = io::stdout();
+        let _ = out.write_all(b"\x1b[0m\x1b[?7h");
+        let _ = execute!(out, Show, LeaveAlternateScreen);
+        let _ = terminal::disable_raw_mode();
+        if hide_pointer {
+            hypr_cursor(true);
+        }
+        let _ = std::fs::create_dir_all(state::state_dir());
+        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(state::state_dir().join("crash.log")) {
+            let _ = writeln!(f, "{info}");
+        }
+        default(info);
+    }));
+}
+
+/// Shows achievements here and tells the other monitors.
+fn announce(toasts: &mut Toasts, server: &mut Option<Server>, events: Vec<GameEvent>) {
+    for g in events {
+        toasts.push(&g);
+        if let Some(sv) = server {
+            sv.broadcast(&ipc::encode(&g));
+        }
+    }
+}
+
+fn send_state(server: &mut Option<Server>, save: &Save) {
+    if let Some(sv) = server {
+        if sv.peers() > 0 {
+            sv.broadcast(&serde_json::json!({ "t": "state", "save": save }));
+        }
+    }
 }
 
 pub fn run(opts: Options) -> io::Result<()> {
+    let cfg = Config::load();
+    let pal = Palette::load(&cfg.palette);
+    install_panic_hook(opts.screensaver);
     wait_for_resize();
     let term = Terminal::enter(opts.screensaver)?;
     let mut out = BufWriter::with_capacity(1 << 16, io::stdout());
@@ -183,54 +209,65 @@ pub fn run(opts: Options) -> io::Result<()> {
         let _ = flag::register(sig, Arc::clone(&stop));
     }
 
-    // Only one instance (one monitor) earns XP; the rest render the same state read-only.
+    // Only one instance (one monitor) earns XP and serves the others; the kernel drops the lock
+    // when that process dies, however it dies.
     let _ = std::fs::create_dir_all(state::state_dir());
     let lock = OpenOptions::new().create(true).write(true).truncate(false).open(state::state_dir().join("lock"))?;
     let primary = lock.try_lock().is_ok();
+    let sock = ipc::sock_path();
+    let mut server: Option<Server> = if primary { Server::bind(&sock).ok() } else { None };
+    let mut client: Option<Client> = if primary { None } else { Client::connect(&sock, Duration::from_secs(3)) };
 
-    let mut toasts = Toasts::new();
-    let mut feed = Feed::new();
+    let mut toasts = Toasts::new(pal);
     let (mut today, mut hour) = state::local_clock();
     let mut save = Save::load();
+    save.no_seasons = !cfg.seasons;
     let mut sess = Session::default();
     if primary {
         Session::clear_last();
         sess.days_away = save.begin_session(today);
-        for g in save.check_trophies(&mut sess, today) {
-            toasts.push(&g);
-            feed.publish(&g);
-        }
+        let events = save.check_trophies(&mut sess, today);
+        announce(&mut toasts, &mut server, events);
         save.store();
+    }
+    let season_of = |day: i64| if cfg.seasons { state::season_at(day) } else { None };
+    let mut season = season_of(today);
+    if let Some(se) = season {
+        toasts.push_season(se);
     }
 
     let (mut cols, mut rows, mut pw, mut ph) = pixel_size();
     let mut world = World::new(pw, ph, layout(&opts.monitor, pw), save.zone_f(), save.reef, state::is_night(hour));
+    world.set_palette(pal);
+    world.set_season(season.map(|s| s.id));
     let mut frame = Frame::new(pw, ph);
     let mut presenter = Presenter::new(cols, rows);
 
-    let quit: Option<Quit>;
+    let quit: Quit;
     let mut pending: VecDeque<(String, &'static str)> = VecDeque::new();
     if !opts.skip_intro {
         pending.push_back((cutscene::intro_text(&save), "bubbles"));
     }
 
-    let (mut last, mut sec_acc, mut save_acc, mut clock_acc, mut reload_acc, mut poll_acc) =
-        (Instant::now(), 0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    let mut power = Power::read(&opts.monitor);
+    let (mut last, mut sec_acc, mut save_acc, mut clock_acc, mut reload_acc, mut state_acc, mut power_acc) =
+        (Instant::now(), 0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    let mut display_was_on = true;
 
     'main: loop {
         if stop.load(Ordering::Relaxed) {
-            quit = Some(Quit::Signal);
+            quit = Quit::Signal;
             break;
         }
         if wake.load(Ordering::Relaxed) {
-            quit = Some(Quit::Wake);
+            quit = Quit::Wake;
             break;
         }
 
         // Cutscenes (ttfx) run between frames and replace the scene for a few seconds.
         if let Some((text, effect)) = pending.pop_front() {
             if cutscene::play(&text, effect)? {
-                quit = Some(Quit::Key);
+                quit = Quit::Key;
                 break;
             }
             presenter.invalidate();
@@ -242,67 +279,141 @@ pub fn run(opts: Options) -> io::Result<()> {
         let dt = now.duration_since(last).as_secs_f64().min(0.1);
         last = now;
 
-        let night = state::is_night(hour);
-        for ev in world.update(dt as f32, save.zone_f(), save.reef, night) {
-            if ev == WorldEvent::WhalePassed && primary {
-                for g in save.on_whale(&mut sess, today) {
-                    toasts.push(&g);
-                    feed.publish(&g);
+        // The primary serves the other monitors and the CLI.
+        if let Some(sv) = &mut server {
+            for req in sv.poll() {
+                match req {
+                    Request::Joined => send_state(&mut server, &save),
+                    Request::Wake => {
+                        quit = Quit::Wake;
+                        break 'main;
+                    }
+                    Request::Stop => {
+                        quit = Quit::Signal;
+                        break 'main;
+                    }
                 }
             }
+        }
+        // A secondary mirrors the primary: state, achievements, and when to stop.
+        if let Some(c) = &mut client {
+            let (msgs, alive) = c.poll();
+            for m in msgs {
+                match m["t"].as_str() {
+                    Some("state") => {
+                        if let Ok(s) = serde_json::from_value::<Save>(m["save"].clone()) {
+                            save = s;
+                            save.no_seasons = !cfg.seasons;
+                        }
+                    }
+                    Some("event") => {
+                        if let Some(g) = ipc::decode(&m) {
+                            toasts.push(&g);
+                        }
+                    }
+                    Some("wake") => {
+                        quit = Quit::Wake;
+                        break 'main;
+                    }
+                    Some("stop") => {
+                        quit = Quit::Signal;
+                        break 'main;
+                    }
+                    _ => {}
+                }
+            }
+            if !alive {
+                quit = Quit::Signal;
+                break;
+            }
+        }
+
+        let night = state::is_night(hour);
+        for ev in world.update(dt as f32, save.zone_f(), save.reef, night) {
+            if !primary {
+                continue;
+            }
+            let events = match ev {
+                WorldEvent::WhalePassed => save.on_whale(&mut sess, today),
+                WorldEvent::Spotted(id) => save.on_spotted(id, &mut sess, today),
+            };
+            announce(&mut toasts, &mut server, events);
         }
 
         sec_acc += dt;
         save_acc += dt;
         clock_acc += dt;
         reload_acc += dt;
+        state_acc += dt;
+        power_acc += dt;
         if sec_acc >= 1.0 {
             if primary {
-                for g in save.tick(sec_acc, &mut sess, night, today) {
-                    toasts.push(&g);
-                    feed.publish(&g);
+                let (zone, reef) = (save.zone(), save.reef);
+                let events = save.tick(sec_acc, &mut sess, night, today);
+                announce(&mut toasts, &mut server, events);
+                // Level, zone and reef shape the scene: push them to the others right away.
+                if save.zone() != zone || save.reef != reef {
+                    send_state(&mut server, &save);
+                    state_acc = 0.0;
                 }
             }
             if opts.screensaver && !screensaver_focused() {
-                quit = Some(Quit::Focus);
+                quit = Quit::Focus;
                 break;
             }
             sec_acc = 0.0;
         }
         if clock_acc >= 60.0 {
             (today, hour) = state::local_clock();
+            season = season_of(today);
+            world.set_season(season.map(|s| s.id));
             clock_acc = 0.0;
         }
         if primary && save_acc >= 10.0 {
             save.store();
             save_acc = 0.0;
         }
-        poll_acc += dt;
-        if !primary && poll_acc >= 0.5 {
-            poll_acc = 0.0;
-            for g in feed.poll() {
-                toasts.push(&g);
-            }
+        if primary && state_acc >= 2.0 {
+            send_state(&mut server, &save);
+            state_acc = 0.0;
         }
-        if !primary && reload_acc >= 5.0 {
+        // Without a link to the primary, fall back to re-reading the save file.
+        if !primary && client.is_none() && reload_acc >= 5.0 {
             save = Save::load();
+            save.no_seasons = !cfg.seasons;
             reload_acc = 0.0;
         }
-        world.draw(&mut frame);
-        let mut overlay = Overlay::new(cols, rows);
-        hud(&mut overlay, &save);
-        toasts.update(dt as f32);
-        toasts.draw(&mut overlay, cols);
-        presenter.present(&frame, &overlay, &mut out)?;
+        if power_acc >= 5.0 {
+            power = Power::read(&opts.monitor);
+            power_acc = 0.0;
+        }
 
-        // Sleep until the next frame, but wake on any key.
+        toasts.update(dt as f32);
+        if power.display_on {
+            if !display_was_on {
+                presenter.invalidate();
+            }
+            world.draw(&mut frame);
+            let mut overlay = Overlay::new(cols, rows);
+            hud(&mut overlay, &save, &pal);
+            toasts.draw(&mut overlay, cols);
+            presenter.present(&frame, &overlay, &mut out)?;
+        }
+        display_was_on = power.display_on;
+
+        // Sleep until the next frame (a slow tick while the monitor is off), but wake on any key.
+        let frame_time = if power.display_on {
+            Duration::from_micros(1_000_000 / power.fps(cfg.fps, cfg.battery_fps).max(1) as u64)
+        } else {
+            Duration::from_millis(500)
+        };
         let spent = Instant::now().duration_since(now);
-        let wait = FRAME.saturating_sub(spent);
+        let wait = frame_time.saturating_sub(spent);
         if event::poll(wait)? {
             loop {
                 match event::read()? {
                     Event::Key(k) if k.kind == KeyEventKind::Press => {
-                        quit = Some(Quit::Key);
+                        quit = Quit::Key;
                         break 'main;
                     }
                     Event::Resize(..) => {
@@ -321,37 +432,35 @@ pub fn run(opts: Options) -> io::Result<()> {
         }
     }
 
-    // Farewell: persist, then show the summary on the instance that received the key.
+    // Farewell: persist, tell the others, then show the summary where the user acted.
     if primary {
         save.snapshot(&mut sess);
         save.store();
         sess.store_last();
+        if let Some(sv) = &mut server {
+            let msg = if matches!(quit, Quit::Wake) { "wake" } else { "stop" };
+            sv.broadcast(&serde_json::json!({ "t": msg }));
+        }
+    } else if matches!(quit, Quit::Key) {
+        if let Some(c) = &mut client {
+            c.send(&serde_json::json!({ "t": "stop" }));
+        }
     }
-    // A key press on any monitor wakes them all; an external wake (USR1) already reached every instance.
-    if matches!(quit, Some(Quit::Key | Quit::Wake)) {
-        if !primary && matches!(quit, Some(Quit::Key)) {
-            for pid in other_instances() {
-                let _ = Command::new("kill").arg(pid.to_string()).status();
-            }
+    if matches!(quit, Quit::Key | Quit::Wake) {
+        if !primary {
+            // The summary is written by the primary as it exits.
             let deadline = Instant::now() + Duration::from_secs(2);
             while lock.try_lock().is_err() && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
-        if !primary && matches!(quit, Some(Quit::Wake)) {
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while lock.try_lock().is_err() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
-        if primary || matches!(quit, Some(Quit::Key | Quit::Wake)) {
-          if let Some(s) = Session::load_last() {
+        if let Some(s) = Session::load_last() {
             if s.secs >= 5.0 {
                 let _ = cutscene::play(&cutscene::summary_text(&s), "waves");
             }
-          }
         }
     }
+    drop(server);
     drop(out);
     drop(term);
     Ok(())

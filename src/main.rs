@@ -1,11 +1,17 @@
 mod app;
+mod config;
 mod cutscene;
+mod doctor;
 mod gfx;
+mod ipc;
+mod power;
 mod sprites;
 mod state;
+mod theme;
 mod toast;
 mod world;
 
+use config::{Config, QUALITIES};
 use gfx::{Frame, Overlay, Presenter};
 use state::{Save, TROPHIES, ZONE_NAMES};
 
@@ -17,6 +23,9 @@ uso:
   abyss mode [abyss|default|toggle]        escolhe qual screensaver o plugin dispara
   abyss quality [low|medium|high|ultra|max] resolução do screensaver (padrão: ultra)
   abyss wake                               acorda o screensaver (mostra o resumo)
+  abyss stop                               encerra o screensaver sem resumo
+  abyss doctor [--fix]                     confere a instalação (e limpa restos de uma falha)
+  abyss config                             mostra a configuração (~/.config/abyss/config.json)
   abyss snapshot [zona 0-5] [reef 0-30]    imprime um quadro ANSI e sai";
 
 fn status_json() {
@@ -24,46 +33,30 @@ fn status_json() {
     println!("{}", s.stats_json(state::Session::load_last().as_ref()));
 }
 
-fn mode_path() -> std::path::PathBuf {
-    state::state_dir().join("mode")
-}
-
-fn current_mode() -> String {
-    match std::fs::read_to_string(mode_path()).map(|m| m.trim().to_string()).as_deref() {
-        Ok("default") => "default".into(),
-        _ => "abyss".into(),
-    }
-}
-
-const QUALITIES: [(&str, f32); 5] = [("low", 18.0), ("medium", 14.0), ("high", 12.0), ("ultra", 10.5), ("max", 9.0)];
-
-fn current_quality() -> (&'static str, f32) {
-    let saved = std::fs::read_to_string(state::state_dir().join("quality")).unwrap_or_default();
-    QUALITIES.iter().copied().find(|(n, _)| *n == saved.trim()).unwrap_or(QUALITIES[3])
-}
-
 /// `abyss quality [low|medium|high|ultra|max]`: screensaver resolution (terminal font size; smaller = finer grid).
 fn quality(args: &[String]) {
+    let mut cfg = Config::load();
     if let Some(&(name, _)) = args.first().and_then(|a| QUALITIES.iter().find(|(n, _)| n == a)) {
-        let _ = std::fs::create_dir_all(state::state_dir());
-        let _ = std::fs::write(state::state_dir().join("quality"), name);
+        cfg.quality = name.into();
+        cfg.store();
     }
-    println!("{}", current_quality().0);
+    println!("{}", cfg.quality);
 }
 
 /// `abyss mode [abyss|default|toggle]`: which screensaver the idle plugin launches.
 fn mode(args: &[String]) {
+    let mut cfg = Config::load();
     let new = match args.first().map(String::as_str) {
         Some("abyss") => Some("abyss"),
         Some("default") => Some("default"),
-        Some("toggle") => Some(if current_mode() == "abyss" { "default" } else { "abyss" }),
+        Some("toggle") => Some(if cfg.mode == "abyss" { "default" } else { "abyss" }),
         _ => None,
     };
     if let Some(m) = new {
-        let _ = std::fs::create_dir_all(state::state_dir());
-        let _ = std::fs::write(mode_path(), m);
+        cfg.mode = m.into();
+        cfg.store();
     }
-    println!("{}", current_mode());
+    println!("{}", cfg.mode);
 }
 
 fn status() {
@@ -73,6 +66,21 @@ fn status() {
     println!("XP {:.0}/{:.0} ({:.0}%)", s.xp, state::xp_at(l + 1), s.progress() * 100.0);
     println!("{} pontos · série de {} dia(s) · recife {}/{} · {} baleia(s)", s.points, s.streak, s.reef, state::REEF_MAX, s.whales);
     println!("Tempo no mar: {:.1} h · sessões: {}", s.total_secs / 3600.0, s.sessions);
+    println!("\nBestiário {}/{}", s.bestiary.len(), state::BESTIARY.len());
+    for c in state::BESTIARY {
+        println!("  {} {}", if s.bestiary.iter().any(|b| b == c.id) { "◆" } else { "·" }, c.name);
+    }
+    if !s.quests.is_empty() {
+        println!("\nMissões de hoje");
+        for id in &s.quests {
+            if let Some(q) = state::quest(id) {
+                println!("  {} {:<18} {}", if s.quest_done.contains(id) { "✔" } else { "·" }, q.name, q.desc);
+            }
+        }
+    }
+    if let Some(se) = state::season_at(s.last_day) {
+        println!("\nEvento: {} (XP ×{})", se.name, state::SEASON_XP_BOOST);
+    }
     println!("\nTroféus {}/{}", s.trophies.len(), TROPHIES.len());
     for t in TROPHIES {
         println!("  {} {:<24} {}", if s.has(t.id) { "★" } else { "·" }, t.name, t.desc);
@@ -83,7 +91,7 @@ fn snapshot(args: &[String]) {
     let zone: f32 = args.first().and_then(|v| v.parse().ok()).unwrap_or(1.0);
     let reef: u32 = args.get(1).and_then(|v| v.parse().ok()).unwrap_or(12);
     let (cols, rows) = (140usize, 40usize);
-    let mut world = world::World::new(cols * 2, rows * 4, world::Layout::single(cols * 2), zone, reef, false);
+    let mut world = world::World::new(cols * 2, rows * 4, world::Layout::single(cols * 2), zone, reef, false).at(1_700_000_000.0);
     for _ in 0..200 {
         world.update(0.1, zone, reef, false);
     }
@@ -115,7 +123,7 @@ fn main() -> std::io::Result<()> {
             Ok(())
         }
         Some("font-size") => {
-            println!("{}", current_quality().1);
+            println!("{}", Config::load().font_size());
             Ok(())
         }
         Some("mode") => {
@@ -123,7 +131,31 @@ fn main() -> std::io::Result<()> {
             Ok(())
         }
         Some("wake") => {
-            let _ = std::process::Command::new("pkill").args(["-USR1", "-f", "^abyss run"]).status();
+            // The socket reaches every monitor; SIGUSR1 is the fallback for an instance that has none.
+            if !ipc::send_once(&ipc::sock_path(), &serde_json::json!({ "t": "wake" })) {
+                let _ = std::process::Command::new("pkill").args(["-USR1", "-f", "^abyss run"]).status();
+            }
+            Ok(())
+        }
+        Some("stop") => {
+            if !ipc::send_once(&ipc::sock_path(), &serde_json::json!({ "t": "stop" })) {
+                let _ = std::process::Command::new("pkill").args(["-TERM", "-f", "^abyss run"]).status();
+            }
+            Ok(())
+        }
+        Some("doctor") => {
+            if args.iter().any(|a| a == "--fix") {
+                for line in doctor::fix() {
+                    println!("• {line}");
+                }
+            }
+            if !doctor::print(&doctor::run_checks()) {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Some("config") => {
+            println!("{}", serde_json::to_string_pretty(&Config::load()).unwrap_or_default());
             Ok(())
         }
         Some("snapshot") => {
