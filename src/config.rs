@@ -22,11 +22,13 @@ pub struct Config {
     pub palette: String,
     /// Seasonal events (Halloween, Christmas, Oceans Day).
     pub seasons: bool,
+    /// Seconds of inactivity before the idle service starts the screensaver.
+    pub idle_secs: u32,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { mode: "abyss".into(), quality: "ultra".into(), fps: 30, battery_fps: 15, palette: "theme".into(), seasons: true }
+        Self { mode: "abyss".into(), quality: "ultra".into(), fps: 30, battery_fps: 15, palette: "theme".into(), seasons: true, idle_secs: 150 }
     }
 }
 
@@ -54,6 +56,7 @@ impl Config {
         }
         self.fps = self.fps.clamp(5, 60);
         self.battery_fps = self.battery_fps.clamp(5, 60);
+        self.idle_secs = self.idle_secs.clamp(10, 7200);
         if self.palette != "classic" {
             self.palette = "theme".into();
         }

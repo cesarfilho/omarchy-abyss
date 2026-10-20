@@ -79,6 +79,7 @@ pub fn summary_text(sess: &Session) -> String {
     }
     lines.push(String::new());
     lines.push(format!("{} pontos · série de {} dia(s)", sess.points, sess.streak));
+    lines.push(format!("{}/{} troféus · {}/{} criaturas", sess.trophies_total, state::TROPHIES.len(), sess.bestiary_total, state::BESTIARY.len()));
     banner(&lines)
 }
 

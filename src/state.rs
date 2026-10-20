@@ -175,6 +175,8 @@ pub struct Session {
     pub days_away: i64,
     pub discoveries: Vec<String>,
     pub quests_done: Vec<String>,
+    pub trophies_total: usize,
+    pub bestiary_total: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -444,6 +446,8 @@ impl Save {
         sess.depth_m = self.depth_m();
         sess.points = self.points;
         sess.streak = self.streak;
+        sess.trophies_total = self.trophies.len();
+        sess.bestiary_total = self.bestiary.len();
     }
 }
 

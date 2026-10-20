@@ -1,6 +1,6 @@
 [package]
 name = "abyss"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 description = "Gamified deep-sea screensaver for Omarchy: pixel-art ocean, XP, trophies, bestiary"
 license = "MIT"

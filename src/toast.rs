@@ -47,6 +47,21 @@ impl Toasts {
         });
     }
 
+    /// Shown when the screensaver starts: where the saved game stands.
+    pub fn push_resume(&mut self, save: &state::Save) {
+        let p = self.pal;
+        self.queue.push_back(Toast {
+            colors: [p.cyan, p.text, p.dim, p.gold],
+            lines: [
+                "≈ RETOMANDO A JORNADA ≈".into(),
+                format!("NÍVEL {} · {} PONTOS", save.level(), save.points),
+                format!("{} · {} M · SÉRIE DE {} DIA(S)", ZONE_NAMES[save.zone()], save.depth_m(), save.streak),
+                format!("{}/{} TROFÉUS", save.trophies.len(), state::TROPHIES.len()),
+            ],
+            t: 0.0,
+        });
+    }
+
     pub fn push(&mut self, ev: &GameEvent) {
         let (gold, cyan, cream, dim) = (self.pal.gold, self.pal.cyan, self.pal.text, self.pal.dim);
         let toast = match ev {

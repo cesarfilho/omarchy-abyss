@@ -250,6 +250,7 @@ pub fn run(opts: Options) -> io::Result<()> {
         announce(&mut toasts, &mut server, events);
         save.store();
     }
+    toasts.push_resume(&save);
     let season_of = |day: i64| if cfg.seasons { state::season_at(day) } else { None };
     let mut season = season_of(today);
     if let Some(se) = season {

@@ -13,6 +13,7 @@ Column {
   readonly property color accent: host.accent
   readonly property string ff: host.font
   readonly property color gold: "#e8c25a"
+  property int tab: 0
   property string hint: ""
   property string creatureHint: ""
 
@@ -131,8 +132,44 @@ Column {
     }
   }
 
+  // ---------- Tabs ----------
+  Row {
+    width: parent.width
+    spacing: Style.space(4)
+
+    Repeater {
+      model: ["Resumo", "Missões", "Troféus", "Ajustes"]
+      Rectangle {
+        required property var modelData
+        required property int index
+        readonly property bool on: col.tab === index
+        width: (parent.width - parent.spacing * 3) / 4
+        height: Style.space(28)
+        radius: Style.space(8)
+        color: on ? col.tint(col.accent, 0.28) : col.tint(col.fg, 0.07)
+        border.width: on ? 1 : 0
+        border.color: col.tint(col.accent, 0.8)
+        Text {
+          anchors.centerIn: parent
+          textFormat: Text.PlainText
+          text: parent.modelData
+          color: parent.on ? col.fg : col.dim
+          font.family: col.ff
+          font.pixelSize: Style.font.bodySmall
+          font.bold: parent.on
+        }
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: col.tab = parent.index
+        }
+      }
+    }
+  }
+
   // ---------- Depth gauge: six zones, marker at current depth ----------
   Column {
+    visible: col.tab === 0
     width: parent.width
     spacing: Style.space(4)
 
@@ -190,6 +227,7 @@ Column {
 
   // ---------- Screensaver switch ----------
   Item {
+    visible: col.tab === 3
     width: parent.width
     height: Style.space(36)
 
@@ -241,6 +279,7 @@ Column {
 
   // ---------- Resolution ----------
   Row {
+    visible: col.tab === 3
     width: parent.width
     spacing: Style.space(8)
 
@@ -294,8 +333,124 @@ Column {
     }
   }
 
+  // ---------- Idle time ----------
+  Row {
+    visible: col.tab === 3
+    width: parent.width
+    spacing: Style.space(8)
+
+    Text {
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(78)
+      textFormat: Text.PlainText
+      text: "INATIVIDADE"
+      color: col.dim
+      font.family: col.ff
+      font.pixelSize: Style.font.caption
+      font.bold: true
+      font.letterSpacing: 1.0
+    }
+
+    Row {
+      width: parent.width - Style.space(86)
+      spacing: Style.space(4)
+
+      Repeater {
+        model: [
+          { secs: 60, label: "1 min" }, { secs: 150, label: "2:30" }, { secs: 300, label: "5 min" },
+          { secs: 600, label: "10 min" }, { secs: 900, label: "15 min" }
+        ]
+        Rectangle {
+          required property var modelData
+          readonly property bool on: col.host.idleSecs === modelData.secs
+          width: (parent.width - parent.spacing * 4) / 5
+          height: Style.space(26)
+          radius: Style.space(7)
+          color: on ? col.tint(col.accent, 0.28) : col.tint(col.fg, 0.07)
+          border.width: on ? 1 : 0
+          border.color: col.tint(col.accent, 0.8)
+
+          Text {
+            anchors.centerIn: parent
+            textFormat: Text.PlainText
+            text: parent.modelData.label
+            color: parent.on ? col.fg : col.dim
+            font.family: col.ff
+            font.pixelSize: Style.font.caption
+            font.bold: parent.on
+          }
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: col.host.setIdle(parent.modelData.secs)
+          }
+        }
+      }
+    }
+  }
+
+  // ---------- Actions ----------
+  Row {
+    visible: col.tab === 3
+    width: parent.width
+    spacing: Style.space(8)
+    property bool confirmReset: false
+
+    Rectangle {
+      width: (parent.width - parent.spacing) / 2
+      height: Style.space(30)
+      radius: Style.space(8)
+      color: col.tint(col.accent, 0.28)
+      border.width: 1
+      border.color: col.tint(col.accent, 0.8)
+      Text {
+        anchors.centerIn: parent
+        textFormat: Text.PlainText
+        text: "󰐊  Iniciar agora"
+        color: col.fg
+        font.family: col.ff
+        font.pixelSize: Style.font.bodySmall
+        font.bold: true
+      }
+      MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: col.host.startNow()
+      }
+    }
+
+    Rectangle {
+      id: resetButton
+      width: (parent.width - parent.spacing) / 2
+      height: Style.space(30)
+      radius: Style.space(8)
+      color: parent.confirmReset ? col.tint("#c0506a", 0.35) : col.tint(col.fg, 0.07)
+      Text {
+        anchors.centerIn: parent
+        textFormat: Text.PlainText
+        text: resetButton.parent.confirmReset ? "Confirmar: apagar tudo" : "󰆴  Limpar estatísticas"
+        color: resetButton.parent.confirmReset ? col.fg : col.dim
+        font.family: col.ff
+        font.pixelSize: Style.font.bodySmall
+      }
+      MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: {
+          if (resetButton.parent.confirmReset) {
+            col.host.resetStats()
+            resetButton.parent.confirmReset = false
+          } else {
+            resetButton.parent.confirmReset = true
+          }
+        }
+      }
+    }
+  }
+
   // ---------- Stat tiles ----------
   Grid {
+    visible: col.tab === 0
     id: tiles
     width: parent.width
     columns: 3
@@ -316,6 +471,7 @@ Column {
 
   // ---------- Activity: last 14 days ----------
   Column {
+    visible: col.tab === 0
     width: parent.width
     spacing: Style.space(6)
 
@@ -356,7 +512,7 @@ Column {
 
   // ---------- Season banner ----------
   Rectangle {
-    visible: col.s && col.s.season ? true : false
+    visible: col.tab === 0 && (col.s && col.s.season ? true : false)
     width: parent.width
     height: visible ? seasonText.implicitHeight + Style.space(12) : 0
     radius: Style.space(8)
@@ -378,7 +534,7 @@ Column {
 
   // ---------- Daily quests ----------
   Column {
-    visible: col.s && col.s.quests && col.s.quests.length > 0 ? true : false
+    visible: col.tab === 1 && (col.s && col.s.quests && col.s.quests.length > 0 ? true : false)
     width: parent.width
     spacing: Style.space(6)
 
@@ -437,7 +593,7 @@ Column {
 
   // ---------- Bestiary ----------
   Column {
-    visible: col.s && col.s.bestiary ? true : false
+    visible: col.tab === 1 && (col.s && col.s.bestiary ? true : false)
     width: parent.width
     spacing: Style.space(6)
 
@@ -495,6 +651,7 @@ Column {
 
   // ---------- Trophies ----------
   Column {
+    visible: col.tab === 2
     width: parent.width
     spacing: Style.space(8)
 

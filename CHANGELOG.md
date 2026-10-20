@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- The screensaver opens with a "retomando a jornada" toast (level, points, depth, streak, trophies) and the farewell summary shows total trophies and creatures.
+- Panel split into tabs: Resumo, Missões, Troféus, Ajustes.
+- New panel controls: start the screensaver now, idle time before it starts (1 to 15 min), and clear statistics and achievements (asks for confirmation).
+- New CLI: `abyss idle [SECONDS]` (`idle_secs` in `config.json`, read live by the plugin), `abyss start`, `abyss reset`.
+
 ## 0.3.1
 
 - The repository root is now the Omarchy plugin (`manifest.json` and the QML at the root, launchers in `bin/`), so it can be added with `omarchy plugin add` and listed on the Omarchy marketplace; `omarchy plugin validate .` passes.

@@ -14,6 +14,7 @@ BarWidget {
   property var stats: null
   property string mode: "abyss"
   property string quality: "ultra"
+  property int idleSecs: 150
   property bool opened: false
   // The plugin is only the front end; the `abyss` program must be installed too (see the README).
   property bool binaryMissing: false
@@ -37,6 +38,23 @@ BarWidget {
     root.quality = next
     qualityProcess.command = ["abyss", "quality", next]
     qualityProcess.running = true
+  }
+
+  function setIdle(secs) {
+    root.idleSecs = secs
+    idleProcess.command = ["abyss", "idle", String(secs)]
+    idleProcess.running = true
+  }
+
+  function startNow() {
+    root.close()
+    startProcess.command = ["bash", "-lc", "sleep 0.4; abyss start"]
+    startProcess.running = true
+  }
+
+  function resetStats() {
+    resetProcess.command = ["abyss", "reset"]
+    resetProcess.running = true
   }
 
   function fmtDuration(secs) {
@@ -103,6 +121,7 @@ BarWidget {
         var c = JSON.parse(text())
         root.mode = c.mode === "default" ? "default" : "abyss"
         if (c.quality) root.quality = c.quality
+        if (c.idle_secs) root.idleSecs = c.idle_secs
       } catch (e) {}
     }
     onFileChanged: reload()
@@ -117,6 +136,12 @@ BarWidget {
 
   Process { id: modeProcess }
   Process { id: qualityProcess }
+  Process { id: idleProcess }
+  Process { id: startProcess }
+  Process {
+    id: resetProcess
+    onExited: { root.stats = null; statsFile.reload() }
+  }
 
   IpcHandler {
     target: "io.github.cesarfilho.abyss"

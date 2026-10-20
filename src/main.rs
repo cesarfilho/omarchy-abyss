@@ -27,6 +27,9 @@ uso:
   abyss quality [low|medium|high|ultra|max] resolução do screensaver (padrão: ultra)
   abyss wake                               acorda o screensaver (mostra o resumo)
   abyss stop                               encerra o screensaver sem resumo
+  abyss idle [segundos]                    tempo de inatividade até iniciar o screensaver (padrão: 150)
+  abyss start                              inicia o screensaver agora
+  abyss reset                              apaga estatísticas, XP e conquistas
   abyss doctor [--fix]                     confere a instalação (e limpa restos de uma falha)
   abyss config                             mostra a configuração (~/.config/abyss/config.json)
   abyss snapshot [zona 0-5] [reef 0-30] [--ppm ARQ] [--t SEG] [--size LxA] [--season ID] [--landmark ID]
@@ -61,6 +64,28 @@ fn mode(args: &[String]) {
         cfg.store();
     }
     println!("{}", cfg.mode);
+}
+
+/// `abyss idle [SECONDS]`: inactivity time before the idle service launches the screensaver.
+fn idle(args: &[String]) {
+    let mut cfg = Config::load();
+    if let Some(n) = args.first().and_then(|a| a.parse::<u32>().ok()) {
+        cfg.idle_secs = n;
+        cfg = cfg.sanitized();
+        cfg.store();
+    }
+    println!("{}", cfg.idle_secs);
+}
+
+/// `abyss reset`: stops a running screensaver, then starts the game over (XP, trophies, history).
+fn reset() {
+    if !ipc::send_once(&ipc::sock_path(), &serde_json::json!({ "t": "stop" })) {
+        let _ = std::process::Command::new("pkill").args(["-TERM", "-f", "^abyss run"]).status();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    state::Session::clear_last();
+    Save::default().store();
+    println!("estatísticas e conquistas apagadas");
 }
 
 fn status() {
@@ -168,6 +193,18 @@ fn main() -> std::io::Result<()> {
         }
         Some("quality") => {
             quality(&args[1..]);
+            Ok(())
+        }
+        Some("idle") => {
+            idle(&args[1..]);
+            Ok(())
+        }
+        Some("start") => {
+            let _ = std::process::Command::new("abyss-screensaver").spawn();
+            Ok(())
+        }
+        Some("reset") => {
+            reset();
             Ok(())
         }
         Some("font-size") => {
