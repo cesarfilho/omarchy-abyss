@@ -99,11 +99,10 @@ impl Config {
             let _ = fs::create_dir_all(dir);
         }
         let tmp = file.with_extension(format!("tmp{}", std::process::id()));
-        if let Ok(s) = serde_json::to_string_pretty(self) {
-            if fs::write(&tmp, s + "\n").is_ok() {
+        if let Ok(s) = serde_json::to_string_pretty(self)
+            && fs::write(&tmp, s + "\n").is_ok() {
                 let _ = fs::rename(&tmp, file);
             }
-        }
     }
 
     pub fn font_size(&self) -> f32 {

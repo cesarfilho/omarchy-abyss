@@ -3,7 +3,8 @@ use std::{
     fs,
     io::{self, Write},
     process::{Command, Stdio},
-    time::Duration,
+    sync::atomic::{AtomicBool, Ordering},
+    time::{Duration, Instant},
 };
 
 use crate::state::{self, Save, Session, ZONE_NAMES};
@@ -81,9 +82,13 @@ pub fn summary_text(sess: &Session) -> String {
     banner(&lines)
 }
 
+/// Longest a cutscene may run. If the terminal vanishes under it (the window was closed) ttfx
+/// and this loop would otherwise spin forever.
+const MAX_SECS: u64 = 25;
+
 /// Plays one ttfx effect over the whole terminal. Returns true when a key was pressed
-/// (the effect is killed and the caller should wake up).
-pub fn play(text: &str, effect: &str) -> io::Result<bool> {
+/// (the effect is killed and the caller should wake up). `stop` is the SIGTERM/SIGHUP flag.
+pub fn play(text: &str, effect: &str, stop: &AtomicBool) -> io::Result<bool> {
     let dir = state::state_dir();
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("cutscene.{}.txt", std::process::id()));
@@ -107,19 +112,28 @@ pub fn play(text: &str, effect: &str) -> io::Result<bool> {
         return Ok(false);
     };
     let mut woke = false;
+    let deadline = Instant::now() + Duration::from_secs(MAX_SECS);
     loop {
         if child.try_wait()?.is_some() {
             break;
         }
-        if event::poll(Duration::from_millis(40))? {
-            if let Event::Key(k) = event::read()? {
-                if k.kind == KeyEventKind::Press {
+        if stop.load(Ordering::Relaxed) || Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            break;
+        }
+        let polled = Instant::now();
+        if event::poll(Duration::from_millis(40))?
+            && let Event::Key(k) = event::read()?
+                && k.kind == KeyEventKind::Press {
                     woke = true;
                     let _ = child.kill();
                     let _ = child.wait();
                     break;
                 }
-            }
+        // A hung-up terminal makes poll return at once; do not turn that into a busy loop.
+        if polled.elapsed() < Duration::from_millis(5) {
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
     let _ = fs::remove_file(&path);

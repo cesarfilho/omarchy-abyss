@@ -1,78 +1,105 @@
 # Abyss
 
-Screensaver gamificado do fundo do mar para o [Omarchy](https://omarchy.org/). Um oceano em pixel-art roda no terminal enquanto você está longe do computador, evolui com o tempo ocioso e rende XP, troféus e pontos. Um plugin para o shell do Omarchy dispara o screensaver e mostra suas estatísticas na barra.
+A gamified deep-sea screensaver for [Omarchy](https://omarchy.org/). A pixel-art ocean runs in your terminal while you are away, evolves with your idle time and earns XP, trophies and points. A shell plugin starts it when you go idle and shows your stats from the bar.
 
-## O que ele faz
+*Português: [README.pt-BR.md](README.pt-BR.md)*
 
-- **Oceano vivo:** peixes (palhaço, cirurgião azul, prateado, tamboril), águas-vivas, baleias, bolhas, neve marinha, brilho bioluminescente e raios de luz. Os peixes são desenhados proceduralmente, com sombreado, nadadeiras, olhos e padrões.
-- **2,5D:** o fundo tem cinco planos de paralaxe, os bichos nadam em profundidades diferentes (os distantes ficam menores e mais enevoados), há sombras no chão e rochas e algas no primeiro plano.
-- **Vários monitores:** os monitores formam um único mar. Quando um peixe sai de uma tela, ele entra na outra.
-- **Progressão:** cada minuto ocioso rende XP. Subir de nível aprofunda o mar por seis zonas (Superfície, Zona de Luz, Crepúsculo, Meia-noite, Abissal e Hadal), que liberam novas espécies. O recife cresce com o tempo e murcha se você ficar dias sem usar.
-- **Conquistas:** 16 troféus, série de dias seguidos e pontuação. Cada conquista aparece como um aviso sobre o mar, em todos os monitores. Ao acordar o computador, um resumo mostra o que aconteceu enquanto você estava fora.
-- **Plugin do shell:** ícone na barra com um painel de estatísticas (nível, XP, profundidade, atividade dos últimos 14 dias, troféus com progresso), seletor entre o Abyss e o screensaver padrão do Omarchy e seletor de resolução.
+![Shallow reef](docs/screenshots/shallow.png)
 
-## Requisitos
-
-- Omarchy (Hyprland e Quickshell) com um destes terminais como padrão: foot, Alacritty, Ghostty ou Kitty.
-- Rust (cargo) para compilar.
-- `ttfx` (já vem com o Omarchy), usado no resumo ao sair.
-
-## Instalação
-
-```bash
-./install.sh
-omarchy plugin enable io.github.cesarfilho.abyss
-omarchy bar put io.github.cesarfilho.abyss --section right
-```
-
-Depois, desligue o screensaver embutido para ele não disparar junto, editando `~/.config/omarchy/shell.json` (faça um backup antes):
-
-```json
-"idle": { "lock": 1800, "screensaver": 0 }
-```
-
-O plugin passa a iniciar o screensaver após 150 s de ociosidade (`timeoutSeconds` em `plugin/Service.qml`). Se o plugin ou o QML mudar, rode `omarchy restart shell`.
-
-Para o item **Screensaver** do menu do Omarchy abrir o Abyss, adicione ao `~/.config/omarchy/extensions/omarchy-menu.jsonc`:
-
-```jsonc
-"system.screensaver": {"icon":"󱄄","label":"Screensaver","action":"abyss-screensaver force"}
-```
-
-## Uso
-
-```bash
-abyss run [--screensaver] [--no-intro] [--monitor NOME]   # roda a cena
-abyss status [--json]                                     # nível, XP, série e troféus
-abyss mode [abyss|default|toggle]                         # qual screensaver o plugin dispara
-abyss quality [low|medium|high|ultra|max]                 # resolução (padrão: ultra)
-abyss wake                                                # encerra o screensaver mostrando o resumo
-abyss snapshot [zona 0-5] [recife 0-30]                   # imprime um quadro ANSI e sai
-```
-
-Qualquer tecla fecha o screensaver. No painel da barra, clique no ícone para abrir as estatísticas; o clique com o botão direito alterna entre o Abyss e o screensaver padrão.
-
-### Resolução
-
-A resolução é o tamanho da fonte do terminal do screensaver, e o texto do HUD acompanha esse tamanho.
-
-| Nível | Fonte |
+| Deep sea | Seasonal event |
 |---|---|
-| low | 18 |
-| medium | 14 |
-| high | 12 |
-| ultra | 10,5 |
-| max | 9 |
+| ![Abyssal zone](docs/screenshots/deep.png) | ![Christmas lights](docs/screenshots/events.png) |
 
-## Onde ficam os dados
+## What it does
 
-Tudo em `~/.local/state/abyss/` (`save.json`, `stats.json`, `mode`, `quality`, `events.json`, `last_session.json`). Para recomeçar do nível 0, apague essa pasta.
+- **A living ocean.** Six species of fish (clownfish, blue tang, sardines, lanternfish, vipers, anglers), jellyfish, whales, bubbles, marine snow and bioluminescent blooms, all drawn procedurally with shading, fins, eyes and patterns.
+- **2.5D.** Five parallax seabed planes, creatures swimming at different depths (far ones are smaller and hazier), shadows on the sand, rocks and kelp in front.
+- **Several monitors, one sea.** The monitors form a single panorama: a fish that leaves one screen enters the next.
+- **Progression.** Every idle minute earns XP. Levels take you down through six zones (Surface, Sunlight, Twilight, Midnight, Abyssal, Hadal) that unlock new species. The reef grows while you are away and wilts if you stay away for days.
+- **Bestiary.** Nine creatures to discover; the first sighting of each is a banner and points.
+- **Daily quests.** Three new quests every day (spend time at sea, see a whale, discover a creature, level up…).
+- **22 trophies**, streaks and points. Every achievement is a banner over the scene on every monitor; waking the computer shows a summary of what happened.
+- **Seasonal events** with 1.5× XP: Jellyfish Night (Oct 24 – Nov 2), Christmas Lights (Dec 20 – Jan 2), Oceans Week (Jun 5–12).
+- **Follows your Omarchy theme.** Water, plankton glow and HUD colours lean toward the active theme (`palette: "classic"` turns it off).
+- **Light on the machine.** About 18 % of one core at 30 fps on a 1080p screen, 9 % at 15 fps; drawing pauses while the monitor sleeps and drops to 15 fps on battery.
+- **Shell plugin.** A bar icon with a stats panel (level, XP, depth, 14-day activity, quests, bestiary, trophies), a switch between Abyss and the stock screensaver, and a resolution selector.
 
-## Desenvolvimento
+## Requirements
+
+Omarchy (Hyprland + Quickshell) with foot, Alacritty, Ghostty or Kitty as the default terminal; `jq` and `socat` (both ship with Omarchy); `ttfx` for the exit summary (ships with Omarchy). Rust (`cargo`) to build.
+
+## Install
+
+```bash
+./install.sh --setup
+```
+
+That builds Abyss, installs `abyss`, `abyss-launch`, `abyss-screensaver` and `abyss-setup` to `~/.local/bin`, copies the shell plugin and wires everything into Omarchy. Without `--setup` it only installs; run `abyss-setup enable` when you want to plug it in.
+
+`abyss-setup enable` (idempotent, backs up what it edits):
+
+1. enables the plugin and puts its widget on the right side of the bar;
+2. sets `idle.screensaver` to `0` in `~/.config/omarchy/shell.json` so the built-in timer does not also fire (the previous value is saved);
+3. points the menu's **Screensaver** item at Abyss (`~/.config/omarchy/extensions/omarchy-menu.jsonc`);
+4. restarts the shell.
+
+Then check everything with `abyss doctor`.
+
+To remove it: `./uninstall.sh` (or `abyss-setup disable` to unplug and keep the files). Your progress in `~/.local/state/abyss` is kept unless you pass `--purge`.
+
+### Arch package
+
+`packaging/PKGBUILD` builds a package from this checkout: `cd packaging && makepkg -si`. Afterwards run `abyss-setup enable` as your user.
+
+## Usage
+
+```bash
+abyss run [--screensaver] [--no-intro] [--monitor NAME]   # run the scene
+abyss status [--json]                                     # level, XP, streak, bestiary, quests, trophies
+abyss mode [abyss|default|toggle]                         # which screensaver the plugin starts
+abyss quality [low|medium|high|ultra|max]                 # resolution (default: ultra)
+abyss wake                                                # end it, showing the summary
+abyss stop                                                # end it without the summary
+abyss doctor [--fix]                                      # check the install; --fix cleans up after a crash
+abyss config                                              # print the active configuration
+abyss snapshot [zone 0-5] [reef 0-30]                     # print one ANSI frame and exit
+```
+
+Any key closes the screensaver. In the bar, click the icon for the stats; right-click switches between Abyss and the stock screensaver.
+
+### Configuration
+
+`~/.config/abyss/config.json` (created on first use; the panel and the CLI both edit it):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mode` | `"abyss"` | `"abyss"` or `"default"` (the stock screensaver) |
+| `quality` | `"ultra"` | `low` 18 · `medium` 14 · `high` 12 · `ultra` 10.5 · `max` 9 (terminal font size: smaller means a finer pixel grid; the HUD text follows it) |
+| `fps` | `30` | frame rate on AC power |
+| `battery_fps` | `15` | frame rate while discharging |
+| `palette` | `"theme"` | `"theme"` follows the Omarchy theme, `"classic"` keeps the original colours |
+| `seasons` | `true` | seasonal events and their XP bonus |
+
+### Data
+
+Progress lives in `~/.local/state/abyss/` (`save.json`, `stats.json`, `last_session.json`, `crash.log`). `save.json` carries a schema version and is migrated when it changes; a file that cannot be read is moved aside as `save.json.corrupt-*`, never overwritten. Delete the folder to start again at level 0.
+
+Environment knobs for testing: `ABYSS_XP_MULT=300` (faster XP), `ABYSS_SEASON=halloween|xmas|oceans` (force an event), `ABYSS_STATE_DIR`, `ABYSS_CONFIG_DIR`, `ABYSS_THEME_FILE`.
+
+## Troubleshooting
+
+`abyss doctor` lists what is wrong and how to fix it. It also warns when Omarchy's own `omarchy-launch-screensaver` changed after `abyss-launch` was copied from it: run `scripts/diff-launch.sh` to see the difference, port what matters, then `abyss-setup record-upstream`.
+
+Nothing happens when idle? `stay-awake` suppresses the idle launch, and `doctor` says whether it is on.
+
+## Development
 
 ```bash
 cargo build --release
-cargo test
+cargo test                          # unit tests: state, world, renderer, socket, config, theme
+cargo clippy --all-targets -- -D warnings
+cargo test --release bench_frame -- --ignored --nocapture   # where a frame's time goes
+scripts/e2e-idle.sh                 # real idle path on your session: plugin -> launcher -> windows -> wake
 ```
 
-Mais detalhes sobre a arquitetura e a integração com o Omarchy estão em [`CLAUDE.md`](CLAUDE.md).
+`scripts/e2e-idle.sh --real` waits for the actual idle timer instead (keep your hands off the keyboard). Architecture notes are in [`CLAUDE.md`](CLAUDE.md).

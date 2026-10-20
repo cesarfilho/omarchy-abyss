@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)] // sprite drawing passes frame, geometry and style explicitly
 mod app;
 mod config;
 mod cutscene;

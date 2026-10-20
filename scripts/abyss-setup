@@ -1,0 +1,160 @@
+#!/bin/bash
+# Wires Abyss into the current user's Omarchy. Every step is idempotent and backs up what it edits.
+#
+#   abyss-setup plugin           copy the shell plugin into ~/.config/omarchy/plugins
+#   abyss-setup enable           plugin + enable it + bar widget + idle.screensaver=0 + menu entry
+#   abyss-setup disable          undo `enable` (restores the previous idle.screensaver)
+#   abyss-setup record-upstream  remember the stock launcher abyss-launch was copied from
+#   abyss-setup status           what is wired up
+set -euo pipefail
+
+ID=io.github.cesarfilho.abyss
+CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/omarchy
+STATE=${ABYSS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/abyss}
+SHELL_JSON=$CONFIG/shell.json
+MENU=$CONFIG/extensions/omarchy-menu.jsonc
+PLUGIN_DIR=$CONFIG/plugins/$ID
+SETUP_RECORD=$STATE/setup.json
+START='// abyss-menu-start'
+END='// abyss-menu-end'
+ENTRY='"system.screensaver": {"icon":"󱄄","label":"Screensaver","action":"abyss-screensaver force"}'
+
+here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+data=
+for d in "${ABYSS_DATA:-}" "$here/.." "${XDG_DATA_HOME:-$HOME/.local/share}/abyss" /usr/share/abyss; do
+  [[ -n $d && -d $d/plugin ]] && { data=$(cd "$d" && pwd); break; }
+done
+
+say() { printf '%s\n' "$*"; }
+need() { command -v "$1" >/dev/null || { say "abyss-setup: '$1' is required" >&2; exit 1; }; }
+backup() { [[ -f $1 ]] && cp -p "$1" "$1.bak.$(date +%s)" || true; }
+
+plugin() {
+  [[ -n $data ]] || { say "abyss-setup: plugin files not found (set ABYSS_DATA)" >&2; exit 1; }
+  mkdir -p "$PLUGIN_DIR"
+  cp "$data"/plugin/*.qml "$data"/plugin/manifest.json "$PLUGIN_DIR"/
+  say "plugin copied to $PLUGIN_DIR"
+}
+
+record_upstream() {
+  local up
+  up=$(command -v omarchy-launch-screensaver || true)
+  [[ -n $up ]] || { say "omarchy-launch-screensaver not found; skipped"; return 0; }
+  mkdir -p "$STATE"
+  sha256sum "$up" | cut -d' ' -f1 >"$STATE/upstream.sha256"
+  say "recorded the stock launcher hash"
+}
+
+set_idle() {
+  need jq
+  [[ -f $SHELL_JSON ]] || { say "no $SHELL_JSON; skipped idle.screensaver"; return 0; }
+  local current
+  current=$(jq -r '.idle.screensaver // "unset"' "$SHELL_JSON")
+  if [[ ! -f $SETUP_RECORD ]]; then
+    mkdir -p "$STATE"
+    jq -n --arg v "$current" '{idle_screensaver: $v}' >"$SETUP_RECORD"
+  fi
+  if [[ $current == 0 ]]; then say "idle.screensaver already 0"; return 0; fi
+  backup "$SHELL_JSON"
+  jq '.idle.screensaver = 0' "$SHELL_JSON" >"$SHELL_JSON.tmp" && mv "$SHELL_JSON.tmp" "$SHELL_JSON"
+  say "idle.screensaver: $current -> 0 (previous value saved)"
+}
+
+restore_idle() {
+  need jq
+  [[ -f $SETUP_RECORD && -f $SHELL_JSON ]] || return 0
+  local prev
+  prev=$(jq -r '.idle_screensaver' "$SETUP_RECORD")
+  backup "$SHELL_JSON"
+  if [[ $prev == unset ]]; then
+    jq 'del(.idle.screensaver)' "$SHELL_JSON" >"$SHELL_JSON.tmp"
+  else
+    jq --argjson v "$prev" '.idle.screensaver = $v' "$SHELL_JSON" >"$SHELL_JSON.tmp"
+  fi
+  mv "$SHELL_JSON.tmp" "$SHELL_JSON"
+  rm -f "$SETUP_RECORD"
+  say "idle.screensaver restored to $prev"
+}
+
+add_menu() {
+  if grep -qF "$START" "$MENU" 2>/dev/null; then say "menu entry already present"; return 0; fi
+  if grep -qE '^\s*"system\.screensaver"\s*:' "$MENU" 2>/dev/null; then
+    say "menu already overrides system.screensaver; left alone"; return 0
+  fi
+  mkdir -p "$(dirname "$MENU")"
+  [[ -f $MENU ]] || printf '{\n}\n' >"$MENU"
+  backup "$MENU"
+  local comma=
+  grep -qE '^\s*"[^"]+"\s*:' "$MENU" && comma=1
+  awk -v start="  $START" -v end="  $END" -v entry="  $ENTRY" -v comma="$comma" '
+    { lines[NR] = $0 }
+    /^}[[:space:]]*$/ { last = NR }
+    END {
+      for (i = 1; i <= NR; i++) {
+        if (i == last) { if (comma) print "  ,"; print start; print entry; print end; print "" }
+        print lines[i]
+      }
+    }' "$MENU" >"$MENU.tmp" && mv "$MENU.tmp" "$MENU"
+  say "menu: Screensaver now opens Abyss"
+}
+
+remove_menu() {
+  grep -qF "$START" "$MENU" 2>/dev/null || return 0
+  backup "$MENU"
+  awk -v start="$START" -v end="$END" '
+    { lines[NR] = $0 }
+    index($0, start) { s = NR }
+    index($0, end) { e = NR }
+    END {
+      t = lines[s - 1]; gsub(/[[:space:]]/, "", t)
+      if (t == ",") s--
+      for (i = 1; i <= NR; i++) if (i < s || i > e) print lines[i]
+    }' "$MENU" >"$MENU.tmp" && mv "$MENU.tmp" "$MENU"
+  say "menu entry removed"
+}
+
+enable() {
+  plugin
+  record_upstream
+  if command -v omarchy >/dev/null; then
+    omarchy plugin enable "$ID" >/dev/null 2>&1 || say "note: could not enable the plugin automatically (omarchy plugin enable $ID)"
+    if [[ -f $SHELL_JSON ]] && ! jq -e --arg id "$ID" '[.bar.layout[]?[]? | select(.id == $id)] | length > 0' "$SHELL_JSON" >/dev/null 2>&1; then
+      omarchy bar put "$ID" --section right >/dev/null 2>&1 || say "note: add the widget with: omarchy bar put $ID --section right"
+    fi
+  else
+    say "omarchy not found: skipped plugin enable and bar widget"
+  fi
+  set_idle
+  add_menu
+  command -v omarchy >/dev/null && omarchy restart shell >/dev/null 2>&1 || true
+  say "done. Check with: abyss doctor"
+}
+
+disable() {
+  if command -v omarchy >/dev/null; then
+    omarchy plugin disable "$ID" >/dev/null 2>&1 || true
+  fi
+  if [[ -f $SHELL_JSON ]] && command -v jq >/dev/null; then
+    backup "$SHELL_JSON"
+    jq --arg id "$ID" '.bar.layout |= (if . then with_entries(.value |= map(select(.id != $id))) else . end)' "$SHELL_JSON" >"$SHELL_JSON.tmp" && mv "$SHELL_JSON.tmp" "$SHELL_JSON"
+  fi
+  restore_idle
+  remove_menu
+  command -v omarchy >/dev/null && omarchy restart shell >/dev/null 2>&1 || true
+  say "Abyss unplugged from Omarchy (your data in $STATE is kept)"
+}
+
+status() {
+  [[ -f $PLUGIN_DIR/manifest.json ]] && say "plugin installed: yes" || say "plugin installed: no"
+  command -v jq >/dev/null && [[ -f $SHELL_JSON ]] && say "idle.screensaver: $(jq -r '.idle.screensaver // "unset"' "$SHELL_JSON")"
+  grep -qF "$START" "$MENU" 2>/dev/null && say "menu entry: yes" || say "menu entry: no"
+}
+
+case "${1:-}" in
+  plugin) plugin ;;
+  enable) enable ;;
+  disable) disable ;;
+  record-upstream) record_upstream ;;
+  status) status ;;
+  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

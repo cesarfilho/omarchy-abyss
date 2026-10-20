@@ -69,6 +69,10 @@ impl Frame {
     pub fn at(&self, x: usize, y: usize) -> Rgb {
         self.px[y * self.w + x]
     }
+
+    pub fn row_mut(&mut self, y: usize) -> &mut [Rgb] {
+        &mut self.px[y * self.w..(y + 1) * self.w]
+    }
 }
 
 /// Text drawn over the pixels (HUD). One entry per terminal cell.
@@ -167,12 +171,16 @@ pub struct Presenter {
     w: usize,
     rows: usize,
     prev: Vec<Cell>,
+    /// The 2x4 source pixels and overlay cell each cell was last computed from: a cell whose
+    /// inputs did not change is skipped before any colour fitting.
+    src: Vec<[Rgb; 8]>,
+    ov: Vec<Option<(char, Rgb)>>,
 }
 
 impl Presenter {
     pub fn new(w: usize, rows: usize) -> Self {
         let blank = Cell { ch: '\0', fg: [0; 3], bg: [0; 3] };
-        Self { w, rows, prev: vec![blank; w * rows] }
+        Self { w, rows, prev: vec![blank; w * rows], src: vec![[[0; 3]; 8]; w * rows], ov: vec![None; w * rows] }
     }
 
     pub fn invalidate(&mut self) {
@@ -191,6 +199,18 @@ impl Presenter {
         const WY: [[f32; 4]; 3] = [[1.0, 1.0 / 3.0, 0.0, 0.0], [0.0, 2.0 / 3.0, 2.0 / 3.0, 0.0], [0.0, 0.0, 1.0 / 3.0, 1.0]];
         for r in 0..self.rows {
             for c in 0..self.w {
+                let i = r * self.w + c;
+                let mut src = [[0u8; 3]; 8];
+                for k in 0..4 {
+                    src[k * 2] = f.at(c * 2, r * 4 + k);
+                    src[k * 2 + 1] = f.at(c * 2 + 1, r * 4 + k);
+                }
+                let ov = o.get(c, r);
+                if self.prev[i].ch != '\0' && self.src[i] == src && self.ov[i] == ov {
+                    continue;
+                }
+                self.src[i] = src;
+                self.ov[i] = ov;
                 let mut px = [[0.0f32; 3]; 6];
                 let mut avg = [0.0f32; 3];
                 for j in 0..3 {
@@ -223,7 +243,6 @@ impl Presenter {
                         }
                     }
                 };
-                let i = r * self.w + c;
                 if self.prev[i] == cell {
                     continue;
                 }

@@ -9,6 +9,7 @@ BarWidget {
   moduleName: "io.github.cesarfilho.abyss"
 
   readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/abyss"
+  readonly property string configDir: Quickshell.env("HOME") + "/.config/abyss"
 
   property var stats: null
   property string mode: "abyss"
@@ -80,19 +81,18 @@ BarWidget {
     onFileChanged: reload()
   }
 
+  // `abyss mode|quality` write this file; the panel switches only ask the CLI and follow the file.
   FileView {
-    path: root.stateDir + "/mode"
+    path: root.configDir + "/config.json"
     watchChanges: true
     printErrors: false
-    onLoaded: root.mode = text().trim() === "default" ? "default" : "abyss"
-    onFileChanged: reload()
-  }
-
-  FileView {
-    path: root.stateDir + "/quality"
-    watchChanges: true
-    printErrors: false
-    onLoaded: { var q = text().trim(); if (q) root.quality = q }
+    onLoaded: {
+      try {
+        var c = JSON.parse(text())
+        root.mode = c.mode === "default" ? "default" : "abyss"
+        if (c.quality) root.quality = c.quality
+      } catch (e) {}
+    }
     onFileChanged: reload()
   }
 

@@ -16,11 +16,10 @@ use crate::state::{self, GameEvent};
 
 pub fn sock_path() -> PathBuf {
     // A test or custom state folder keeps its own socket; otherwise the runtime dir (tmpfs, per user).
-    if std::env::var_os("ABYSS_STATE_DIR").is_none() {
-        if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR") {
+    if std::env::var_os("ABYSS_STATE_DIR").is_none()
+        && let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR") {
             return PathBuf::from(rt).join("abyss.sock");
         }
-    }
     state::state_dir().join("abyss.sock")
 }
 

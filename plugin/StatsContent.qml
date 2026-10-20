@@ -14,6 +14,7 @@ Column {
   readonly property string ff: host.font
   readonly property color gold: "#e8c25a"
   property string hint: ""
+  property string creatureHint: ""
 
   spacing: Style.space(12)
 
@@ -329,6 +330,145 @@ Column {
     }
   }
 
+  // ---------- Season banner ----------
+  Rectangle {
+    visible: col.s && col.s.season ? true : false
+    width: parent.width
+    height: visible ? seasonText.implicitHeight + Style.space(12) : 0
+    radius: Style.space(8)
+    color: col.tint(col.accent, 0.14)
+    Text {
+      id: seasonText
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.margins: Style.space(10)
+      textFormat: Text.PlainText
+      text: col.s && col.s.season ? "≈ " + col.s.season.name + " · XP ×" + col.s.season.boost + " · " + col.s.season.desc : ""
+      color: col.fg
+      font.family: col.ff
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
+    }
+  }
+
+  // ---------- Daily quests ----------
+  Column {
+    visible: col.s && col.s.quests && col.s.quests.length > 0 ? true : false
+    width: parent.width
+    spacing: Style.space(6)
+
+    SectionLabel {
+      text: "MISSÕES DE HOJE  " + (col.s ? col.s.quests.filter(function(q) { return q.done }).length : 0) + " / " + (col.s ? col.s.quests.length : 0)
+    }
+
+    Repeater {
+      model: col.s ? col.s.quests : []
+      Item {
+        id: quest
+        required property var modelData
+        width: parent.width
+        height: Style.space(28)
+
+        Text {
+          id: questMark
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: quest.modelData.done ? "✔" : "○"
+          color: quest.modelData.done ? col.gold : col.dim
+          font.family: col.ff
+          font.pixelSize: Style.font.body
+        }
+        Column {
+          anchors.left: questMark.right
+          anchors.leftMargin: Style.space(8)
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(2)
+          Text {
+            width: parent.width
+            textFormat: Text.PlainText
+            text: quest.modelData.name + " — " + quest.modelData.desc
+            color: quest.modelData.done ? col.dim : col.fg
+            font.family: col.ff
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
+          Rectangle {
+            width: parent.width
+            height: 3
+            radius: 1.5
+            color: col.tint(col.fg, 0.12)
+            Rectangle {
+              width: parent.width * quest.modelData.progress
+              height: parent.height
+              radius: parent.radius
+              color: quest.modelData.done ? col.gold : col.accent
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ---------- Bestiary ----------
+  Column {
+    visible: col.s && col.s.bestiary ? true : false
+    width: parent.width
+    spacing: Style.space(6)
+
+    Row {
+      width: parent.width
+      SectionLabel {
+        text: "BESTIÁRIO  " + (col.s ? col.s.bestiary.filter(function(c) { return c.found }).length : 0) + " / " + (col.s ? col.s.bestiary.length : 0)
+        width: parent.width / 2
+      }
+      Text {
+        width: parent.width / 2
+        horizontalAlignment: Text.AlignRight
+        textFormat: Text.PlainText
+        text: col.creatureHint
+        color: col.dim
+        font.family: col.ff
+        font.pixelSize: Style.font.caption
+        elide: Text.ElideRight
+      }
+    }
+
+    Flow {
+      width: parent.width
+      spacing: Style.space(6)
+      Repeater {
+        model: col.s ? col.s.bestiary : []
+        Rectangle {
+          id: creature
+          required property var modelData
+          width: Style.space(38)
+          height: Style.space(26)
+          radius: Style.space(8)
+          color: modelData.found ? col.tint(col.accent, 0.18) : col.tint(col.fg, 0.06)
+          Text {
+            anchors.centerIn: parent
+            textFormat: Text.PlainText
+            text: creature.modelData.found ? "◆" : "?"
+            color: creature.modelData.found ? col.accent : col.dim
+            opacity: creature.modelData.found ? 1 : 0.5
+            font.family: col.ff
+            font.pixelSize: Style.font.body
+          }
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            onEntered: col.creatureHint = creature.modelData.found
+              ? creature.modelData.name + " · " + creature.modelData.desc
+              : "zonas " + (creature.modelData.zones[0] + 1) + "–" + (creature.modelData.zones[1] + 1)
+            onExited: col.creatureHint = ""
+          }
+        }
+      }
+    }
+  }
+
   // ---------- Trophies ----------
   Column {
     width: parent.width
@@ -365,7 +505,7 @@ Column {
           id: badge
           required property var modelData
           width: badges.cell
-          height: Style.space(64)
+          height: Style.space(56)
           radius: Style.space(8)
           color: modelData.unlocked ? col.tint(col.gold, 0.16) : col.tint(col.fg, 0.06)
           border.width: modelData.unlocked ? 1 : 0

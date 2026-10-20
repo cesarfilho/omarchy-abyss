@@ -37,7 +37,7 @@ fn slot_of(z: f32) -> usize {
 
 const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 const DITHER_STEP: f32 = 16.0;
-const SEED: u64 = 0xAB155_0CEA;
+const SEED: u64 = 0x000A_B155_0CEA;
 const WHALE_WINDOW: f64 = 300.0;
 const BLOOM_WINDOW: f64 = 240.0;
 
@@ -296,7 +296,7 @@ impl World {
                     vx: speed * g.range(0.95, 1.05),
                     amp: g.range(1.0, 3.5) * scale_z(school_z),
                     freq,
-                    phase: g.range(0.0, 6.28),
+                    phase: g.range(0.0, std::f32::consts::TAU),
                 });
             }
         }
@@ -309,7 +309,7 @@ impl World {
                 x: g.range(0.0, self.pano),
                 y0: g.range(0.0, self.h as f32 * 1.1),
                 vy: g.range(6.0, 16.0) * self.unit(),
-                phase: g.range(0.0, 6.28),
+                phase: g.range(0.0, std::f32::consts::TAU),
                 big: g.chance(0.2),
             })
             .collect();
@@ -323,12 +323,12 @@ impl World {
                 x0: g.range(0.0, len_track as f32) as f64,
                 base_y: g.range(0.15, 0.6),
                 vx: g.range(-4.0, 4.0) * self.unit(),
-                phase: g.range(0.0, 6.28),
+                phase: g.range(0.0, std::f32::consts::TAU),
             })
             .collect();
         let n_glows = (70.0 * self.pano / self.refw) as usize;
         self.glows = (0..n_glows)
-            .map(|_| Glow { x: g.range(0.0, self.pano), y: g.range(0.0, 0.9), phase: g.range(0.0, 6.28), hue: g.f() })
+            .map(|_| Glow { x: g.range(0.0, self.pano), y: g.range(0.0, 0.9), phase: g.range(0.0, std::f32::consts::TAU), hue: g.f() })
             .collect();
     }
 
@@ -492,29 +492,50 @@ impl World {
         self.draw_bubbles(f, false);
     }
 
+    /// Vertical gradient, light rays and ordered dithering. Done a row at a time: the gradient is
+    /// constant along a row and the ray pattern depends only on `x + 0.45 y`, so it comes from a
+    /// table (sampled every 1/20 pixel, where `0.45 y` lands exactly on whole table steps).
     fn draw_water(&self, f: &mut Frame, top: Rgb, bot: Rgb) {
+        const STEP: usize = 20;
         let ray_strength = (1.0 - self.zf / 3.0).max(0.0) * 0.8;
         let dim = 1.0 - 0.35 * if self.night { 1.0 } else { 0.0 } * (1.0 - (self.zf / 3.0).min(1.0));
         let h = self.h as f32;
+        let k = self.px_scale as f32;
+        let rays = ray_strength > 0.02;
+        let table: Vec<f32> = if rays {
+            (0..=STEP * self.w + 9 * self.h)
+                .map(|i| {
+                    let u = (i as f32 / STEP as f32 + self.off) / k - self.t * 2.5;
+                    (u * 0.045).sin() * 0.5 + (u * 0.11 + 1.3).sin() * 0.5
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let bayer: [[f32; 4]; 4] = BAYER.map(|r| r.map(|v| (v as f32 / 16.0 - 0.5) * DITHER_STEP));
+        let inv = 1.0 / DITHER_STEP;
+        let off = self.off as usize;
         for y in 0..self.h {
             let base = lerp(top, bot, y as f32 / h);
+            let base = [base[0] as f32 * dim, base[1] as f32 * dim, base[2] as f32 * dim];
             let fall = 1.0 - y as f32 / h;
-            for x in 0..self.w {
-                let mut c = [base[0] as f32 * dim, base[1] as f32 * dim, base[2] as f32 * dim];
-                if ray_strength > 0.02 {
-                    let k = self.px_scale as f32;
-                    let u = ((x as f32 + self.off) + y as f32 * 0.45) / k - self.t * 2.5;
-                    let v = (u * 0.045).sin() * 0.5 + (u * 0.11 + 1.3).sin() * 0.5;
+            let gain = 70.0 * ray_strength * fall * dim;
+            let th_row = &bayer[y & 3];
+            for (x, px) in f.row_mut(y).iter_mut().enumerate() {
+                let mut c = base;
+                if rays {
+                    let v = table[STEP * x + 9 * y];
                     if v > 0.35 {
-                        let add = (v - 0.35) * 70.0 * ray_strength * fall * dim;
+                        let add = (v - 0.35) * gain;
                         c[0] += add * 0.6;
                         c[1] += add * 0.9;
                         c[2] += add;
                     }
                 }
-                let th = (BAYER[y & 3][(x + self.off as usize) & 3] as f32 / 16.0 - 0.5) * DITHER_STEP;
-                let q = |v: f32| (((v + th) / DITHER_STEP).round() * DITHER_STEP).clamp(0.0, 255.0) as u8;
-                f.set(x as i32, y as i32, [q(c[0]), q(c[1]), q(c[2])]);
+                let th = th_row[(x + off) & 3];
+                // `as i32` truncates, so +0.5 makes it a round for the non-negative range that matters.
+                let q = |v: f32| ((((v + th) * inv + 0.5) as i32) * DITHER_STEP as i32).clamp(0, 255) as u8;
+                *px = [q(c[0]), q(c[1]), q(c[2])];
             }
         }
     }
@@ -891,5 +912,49 @@ mod tests {
         w.draw(&mut f);
         assert!(!same(&plain, &f), "halloween adds jellies and orange plankton even in the shallows");
         assert_eq!(w.jelly_count(), 5);
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use crate::gfx::{Overlay, Presenter};
+
+    /// `cargo test --release bench_frame -- --ignored --nocapture`: where does a frame's time go?
+    #[test]
+    #[ignore]
+    fn bench_frame() {
+        let (cols, rows) = (320usize, 85usize);
+        let (w, h) = (cols * 2, rows * 4);
+        let mut world = World::new(w, h, Layout::single(w), 2.5, 20, false).at(1_700_000_000.0);
+        let mut f = Frame::new(w, h);
+        let mut p = Presenter::new(cols, rows);
+        let o = Overlay::new(cols, rows);
+        let (mut td, mut tp) = (0.0, 0.0);
+        let n = 60;
+        for i in 0..n {
+            world.fixed = Some(1_700_000_000.0 + i as f64 / 30.0);
+            world.update(0.033, 2.5, 20, false);
+            let t = std::time::Instant::now();
+            world.draw(&mut f);
+            td += t.elapsed().as_secs_f64();
+            let t = std::time::Instant::now();
+            p.present(&f, &o, &mut std::io::sink()).unwrap();
+            tp += t.elapsed().as_secs_f64();
+        }
+        let bot = world.water().1;
+        let top = world.water().0;
+        macro_rules! t { ($name:expr, $e:expr) => {{ let t = std::time::Instant::now(); for _ in 0..n { $e; } println!("  {:<10} {:.2} ms", $name, t.elapsed().as_secs_f64() / n as f64 * 1e3); }}; }
+        t!("water", world.draw_water(&mut f, top, bot));
+        t!("snow", world.draw_snow(&mut f));
+        t!("bubbles", { world.draw_bubbles(&mut f, true); world.draw_bubbles(&mut f, false) });
+        t!("seabed", for s in 0..5 { world.draw_seabed(&mut f, s, bot) });
+        t!("corals", for s in 0..2 { world.draw_corals(&mut f, bot, s) });
+        t!("shadows", for s in 0..5 { world.draw_shadows(&mut f, bot, s) });
+        t!("jellies", for s in 0..5 { world.draw_jellies(&mut f, bot, s) });
+        t!("fish", for s in 0..5 { world.draw_fish(&mut f, bot, s) });
+        t!("bloom", world.draw_bloom(&mut f));
+        t!("foreground", world.draw_foreground(&mut f, bot));
+        println!("{w}x{h}: draw {:.2} ms, present {:.2} ms per frame", td / n as f64 * 1e3, tp / n as f64 * 1e3);
     }
 }

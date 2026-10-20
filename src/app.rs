@@ -187,11 +187,10 @@ fn announce(toasts: &mut Toasts, server: &mut Option<Server>, events: Vec<GameEv
 }
 
 fn send_state(server: &mut Option<Server>, save: &Save) {
-    if let Some(sv) = server {
-        if sv.peers() > 0 {
+    if let Some(sv) = server
+        && sv.peers() > 0 {
             sv.broadcast(&serde_json::json!({ "t": "state", "save": save }));
         }
-    }
 }
 
 pub fn run(opts: Options) -> io::Result<()> {
@@ -215,6 +214,27 @@ pub fn run(opts: Options) -> io::Result<()> {
     let lock = OpenOptions::new().create(true).write(true).truncate(false).open(state::state_dir().join("lock"))?;
     let primary = lock.try_lock().is_ok();
     let sock = ipc::sock_path();
+
+    // crossterm spins forever inside `poll`/`read` once the terminal has hung up (it ignores the
+    // EIO), so a closed window would leave this process at 100% CPU. The signal handlers above
+    // only set a flag; this thread is the backstop that ends the process if the loop never sees it.
+    let (watch, sock_path, hidden) = (Arc::clone(&stop), ipc::sock_path(), opts.screensaver);
+    std::thread::spawn(move || {
+        while !watch.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        std::thread::sleep(Duration::from_millis(1500));
+        // Still here: the normal exit path is stuck. Undo what the process changed, then leave.
+        if hidden {
+            hypr_cursor(true);
+        }
+        if primary {
+            let _ = std::fs::remove_file(&sock_path);
+        }
+        let _ = std::fs::remove_file(state::state_dir().join(format!("cutscene.{}.txt", std::process::id())));
+        std::process::exit(0);
+    });
+
     let mut server: Option<Server> = if primary { Server::bind(&sock).ok() } else { None };
     let mut client: Option<Client> = if primary { None } else { Client::connect(&sock, Duration::from_secs(3)) };
 
@@ -266,7 +286,7 @@ pub fn run(opts: Options) -> io::Result<()> {
 
         // Cutscenes (ttfx) run between frames and replace the scene for a few seconds.
         if let Some((text, effect)) = pending.pop_front() {
-            if cutscene::play(&text, effect)? {
+            if cutscene::play(&text, effect, &stop)? {
                 quit = Quit::Key;
                 break;
             }
@@ -431,7 +451,6 @@ pub fn run(opts: Options) -> io::Result<()> {
             }
         }
     }
-
     // Farewell: persist, tell the others, then show the summary where the user acted.
     if primary {
         save.snapshot(&mut sess);
@@ -441,11 +460,10 @@ pub fn run(opts: Options) -> io::Result<()> {
             let msg = if matches!(quit, Quit::Wake) { "wake" } else { "stop" };
             sv.broadcast(&serde_json::json!({ "t": msg }));
         }
-    } else if matches!(quit, Quit::Key) {
-        if let Some(c) = &mut client {
+    } else if matches!(quit, Quit::Key)
+        && let Some(c) = &mut client {
             c.send(&serde_json::json!({ "t": "stop" }));
         }
-    }
     if matches!(quit, Quit::Key | Quit::Wake) {
         if !primary {
             // The summary is written by the primary as it exits.
@@ -454,11 +472,10 @@ pub fn run(opts: Options) -> io::Result<()> {
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
-        if let Some(s) = Session::load_last() {
-            if s.secs >= 5.0 {
-                let _ = cutscene::play(&cutscene::summary_text(&s), "waves");
+        if let Some(s) = Session::load_last()
+            && s.secs >= 5.0 {
+                let _ = cutscene::play(&cutscene::summary_text(&s), "waves", &stop);
             }
-        }
     }
     drop(server);
     drop(out);

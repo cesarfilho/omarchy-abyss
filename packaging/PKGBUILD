@@ -1,0 +1,46 @@
+# Maintainer: Cesar Pamplona Filho <cesarpamplonafilho@gmail.com>
+# Builds from this checkout (the PKGBUILD lives in packaging/). For a published release, replace
+# `_src` with a `source=()` entry pointing at the tagged tarball and add its checksum.
+pkgname=omarchy-abyss
+pkgver=0.2.0
+pkgrel=1
+pkgdesc='Gamified deep-sea screensaver for Omarchy: pixel-art ocean, XP, trophies, bestiary, shell plugin'
+arch=(x86_64 aarch64)
+license=(custom) # no licence file chosen yet; set this before publishing
+depends=(hyprland quickshell jq socat)
+makedepends=(cargo)
+optdepends=('foot: terminal used by the Omarchy screensaver'
+            'ttfx: intro and exit summary animation (ships with Omarchy)'
+            'grim: scripts/e2e-idle.sh screenshots')
+options=(!lto) # the release profile already sets lto = "thin"
+install=omarchy-abyss.install
+
+_src="$startdir/.."
+
+prepare() {
+  cd "$_src"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_src"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --release --locked
+}
+
+check() {
+  cd "$_src"
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo test --release --locked
+}
+
+package() {
+  cd "$_src"
+  install -Dm755 "$srcdir/target/release/abyss" "$pkgdir/usr/bin/abyss"
+  install -Dm755 plugin/abyss-launch "$pkgdir/usr/bin/abyss-launch"
+  install -Dm755 plugin/abyss-screensaver "$pkgdir/usr/bin/abyss-screensaver"
+  install -Dm755 scripts/abyss-setup "$pkgdir/usr/bin/abyss-setup"
+  install -Dm644 plugin/manifest.json "$pkgdir/usr/share/abyss/plugin/manifest.json"
+  install -m644 plugin/*.qml -t "$pkgdir/usr/share/abyss/plugin/"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

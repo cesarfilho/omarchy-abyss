@@ -386,14 +386,13 @@ impl Save {
                 sess.reef_gain += 1;
             }
         }
-        if !self.no_seasons {
-            if let Some(se) = season_at(today) {
+        if !self.no_seasons
+            && let Some(se) = season_at(today) {
                 match self.season_secs.iter_mut().find(|r| r.id == se.id) {
                     Some(r) => r.secs += dt,
                     None => self.season_secs.push(SeasonRec { id: se.id.to_string(), secs: dt }),
                 }
             }
-        }
         let level = self.level();
         if level > level_before {
             sess.levels_gained += level - level_before;
@@ -616,6 +615,7 @@ pub fn is_night(hour: u32) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
@@ -777,7 +777,7 @@ mod tests {
         events = s.on_whale(&mut sess, 500);
         assert!(events.contains(&GameEvent::Quest("whale")));
         assert!(s.quest_done.contains(&"whale".to_string()));
-        assert_eq!(s.quests_total, 2 + s.quest_done.contains(&"level".to_string()) as u32 - 0);
+        assert_eq!(s.quests_total as usize, s.quest_done.len());
         assert!(s.points >= 2 * QUEST_POINTS);
     }
 

@@ -1,0 +1,39 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: abyss-linux-x86_64
+          path: target/release/abyss
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck jq
+      - run: shellcheck -S warning install.sh uninstall.sh scripts/* plugin/abyss-launch plugin/abyss-screensaver
+      - name: abyss-setup round trip in a throw-away HOME
+        run: |
+          export HOME=$(mktemp -d) ABYSS_DATA=$PWD
+          mkdir -p "$HOME/.config/omarchy"
+          echo '{"idle":{"lock":1800,"screensaver":300}}' > "$HOME/.config/omarchy/shell.json"
+          scripts/abyss-setup enable
+          test "$(jq .idle.screensaver "$HOME/.config/omarchy/shell.json")" = 0
+          grep -q abyss-menu-start "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
+          scripts/abyss-setup disable
+          test "$(jq .idle.screensaver "$HOME/.config/omarchy/shell.json")" = 300
+          ! grep -q abyss-menu-start "$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"

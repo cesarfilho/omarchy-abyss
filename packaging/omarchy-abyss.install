@@ -1,0 +1,13 @@
+post_install() {
+  echo "Abyss installed. As your user, plug it into Omarchy with:  abyss-setup enable"
+  echo "Then check everything with:  abyss doctor"
+}
+
+post_upgrade() {
+  echo "Abyss updated. Run  abyss-setup plugin && omarchy restart shell  to refresh the shell plugin,"
+  echo "and  abyss doctor  to see whether omarchy-launch-screensaver changed."
+}
+
+pre_remove() {
+  echo "Before removing, run as your user:  abyss-setup disable  (restores idle.screensaver and the menu)."
+}
