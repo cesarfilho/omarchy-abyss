@@ -14,7 +14,7 @@ optdepends=('foot: terminal used by the Omarchy screensaver'
 options=(!lto !debug) # the release profile already sets lto = "thin"
 install=omarchy-abyss.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('811325b15fa055226facba358d072f3cf7c1866e1c6590e592d586b8aa8be87b')
+sha256sums('9f87aa715df3782dccd0b74e2d3f294299bbcca9ab52b5ad2dd8a5d5a1cb2f5b')
 
 prepare() {
   cd "$pkgname-$pkgver"
