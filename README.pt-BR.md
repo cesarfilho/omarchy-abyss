@@ -33,7 +33,7 @@ Screensaver gamificado do fundo do mar para o [Omarchy](https://omarchy.org/). U
 
 ### O plugin do shell
 
-Um ícone na barra abre um painel com nível, profundidade, atividade dos últimos 14 dias, missões, bestiário e troféus, uma chave entre o Abyss e o screensaver padrão do Omarchy e um seletor de resolução. O botão direito no ícone alterna entre os dois screensavers.
+Um ícone na barra abre um painel em abas com nível, profundidade, atividade dos últimos 14 dias, missões, bestiário e troféus. Na aba de ajustes é possível iniciar o screensaver na hora, escolher o tempo de inatividade, alternar entre o Abyss e o screensaver padrão do Omarchy, selecionar a resolução ou limpar o progresso após confirmação. O botão direito no ícone alterna entre os dois screensavers.
 
 <p align="center"><img src="docs/screenshots/panel.png" alt="O painel de estatísticas" width="340"></p>
 
@@ -99,6 +99,9 @@ abyss run [--screensaver] [--no-intro] [--monitor NOME]   # roda a cena
 abyss status [--json]                                     # nível, XP, série, bestiário, missões e troféus
 abyss mode [abyss|default|toggle]                         # qual screensaver o plugin dispara
 abyss quality [low|medium|high|ultra|max]                 # resolução (padrão: ultra)
+abyss idle [SEGUNDOS]                                     # tempo de inatividade (padrão: 150 s)
+abyss start                                               # inicia agora o screensaver configurado
+abyss reset                                               # apaga estatísticas, XP e conquistas
 abyss wake                                                # encerra mostrando o resumo
 abyss stop                                                # encerra sem o resumo
 abyss doctor [--fix]                                      # confere a instalação; --fix limpa restos de uma falha
@@ -121,6 +124,7 @@ Qualquer tecla fecha o screensaver. Na barra, clique no ícone para ver as estat
 | `battery_fps` | `15` | quadros por segundo na bateria |
 | `palette` | `"theme"` | `"theme"` segue o tema do Omarchy, `"classic"` mantém as cores originais |
 | `seasons` | `true` | eventos de temporada e o bônus de XP |
+| `idle_secs` | `150` | segundos de inatividade até o plugin iniciar o screensaver (10–7200) |
 
 ### Dados
 
@@ -145,7 +149,9 @@ scripts/e2e-idle.sh                 # caminho real de ociosidade na sua sessão:
 scripts/make-gifs.py                # renderiza de novo as animações do README
 ```
 
-`scripts/e2e-idle.sh --real` espera o temporizador de ociosidade de verdade (não toque no teclado). Notas de arquitetura em [`CLAUDE.md`](CLAUDE.md).
+`scripts/e2e-idle.sh --real` espera o temporizador de ociosidade de verdade (não toque no teclado). A captura de diagnóstico é criada com permissões exclusivas do dono em um diretório temporário único e removida ao sair. Notas de arquitetura em [`CLAUDE.md`](CLAUDE.md).
+
+Depois de um CI bem-sucedido na `main`, o GitHub Actions cria a tag da versão em `Cargo.toml`, atualiza o checksum do PKGBUILD de release e atualiza a submissão aberta ao marketplace Omarchy (ou abre um pedido de verificação se o plugin já estiver listado). Configure o segredo de repositório `OMARCHY_MARKETPLACE_TOKEN` com um token de acesso refinado, limitado à leitura e escrita de Issues em `omacom/omarchy-plugin-marketplace`. Se a primeira execução for ignorada por falta do segredo, adicione-o e execute uma vez o workflow `release-marketplace`.
 
 ## Licença
 

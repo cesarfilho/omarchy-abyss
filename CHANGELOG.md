@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Security: `scripts/e2e-idle.sh` now stores its diagnostic screenshot in an owner-only temporary directory with private file permissions and removes it on exit.
+
 ## 0.4.0
 
 - The screensaver opens with a "retomando a jornada" toast (level, points, depth, streak, trophies) and the farewell summary shows total trophies and creatures.

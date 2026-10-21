@@ -25,7 +25,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y shellcheck jq
-      - run: shellcheck -S warning install.sh uninstall.sh scripts/*.sh scripts/abyss-setup bin/abyss-launch bin/abyss-screensaver
+      - run: shellcheck -S warning install.sh uninstall.sh scripts/*.sh scripts/abyss-setup tests/*.sh bin/abyss-launch bin/abyss-screensaver
+      - run: tests/e2e-idle-security.sh
       - name: abyss-setup round trip in a throw-away HOME
         run: |
           unset XDG_CONFIG_HOME XDG_STATE_HOME XDG_DATA_HOME

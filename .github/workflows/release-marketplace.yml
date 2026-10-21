@@ -1,0 +1,55 @@
+name: release-marketplace
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-marketplace-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.repository == 'cesarfilho/omarchy-abyss' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - id: credentials
+        name: Check marketplace credentials
+        env:
+          MARKETPLACE_TOKEN: ${{ secrets.OMARCHY_MARKETPLACE_TOKEN }}
+        run: |
+          if [[ -z "$MARKETPLACE_TOKEN" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+              echo "::error::Add OMARCHY_MARKETPLACE_TOKEN before dispatching a release."
+              exit 1
+            fi
+            echo "::warning::Release skipped: add OMARCHY_MARKETPLACE_TOKEN and dispatch this workflow."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            printf 'Release skipped because the `OMARCHY_MARKETPLACE_TOKEN` repository secret is not configured. Add it and run this workflow once to publish the current version.\n' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag release, refresh package checksum, and submit to marketplace
+        if: steps.credentials.outputs.ready == 'true'
+        env:
+          MARKETPLACE_TOKEN: ${{ secrets.OMARCHY_MARKETPLACE_TOKEN }}
+          OMARCHY_MARKETPLACE_SUBMISSION_ISSUE: ${{ vars.OMARCHY_MARKETPLACE_SUBMISSION_ISSUE || '12424' }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          RELEASE_TRIGGER: ${{ github.event_name }}
+        run: scripts/release-marketplace.sh

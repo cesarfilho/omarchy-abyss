@@ -19,6 +19,8 @@ STAY=$HOME/.local/state/omarchy/indicators/stay-awake
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/abyss
 SOCK=${XDG_RUNTIME_DIR:-/tmp}/abyss.sock
 fails=0
+capture_dir=
+shot=
 
 ok() { printf '  ✓ %s\n' "$1"; }
 bad() { printf '  ✗ %s\n' "$1"; fails=$((fails + 1)); }
@@ -40,10 +42,16 @@ monitors=$(hyprctl monitors -j | jq length)
 restore_stay=0
 if [[ -e $STAY ]]; then
   mv "$STAY" "$STAY.e2e-saved" && restore_stay=1
-  trap '[[ $restore_stay == 1 ]] && mv "$STAY.e2e-saved" "$STAY"; abyss stop >/dev/null 2>&1' EXIT
-else
-  trap 'abyss stop >/dev/null 2>&1' EXIT
 fi
+cleanup() {
+  local status=$?
+  [[ -n $shot ]] && rm -f -- "$shot"
+  [[ -n $capture_dir ]] && rmdir -- "$capture_dir" 2>/dev/null || true
+  [[ $restore_stay == 1 ]] && mv "$STAY.e2e-saved" "$STAY"
+  abyss stop >/dev/null 2>&1
+  return "$status"
+}
+trap cleanup EXIT
 
 echo "monitors: $monitors"
 echo "1. launch"
@@ -63,8 +71,14 @@ check "the other monitors are subscribed" '[[ $(ss -xH state connected 2>/dev/nu
 echo "2. run for 15 s"
 sleep 15
 mkdir -p "${TMPDIR:-/tmp}"
-shot=${TMPDIR:-/tmp}/abyss-e2e.png
-grim "$shot" 2>/dev/null && ok "screenshot: $shot" || bad "grim failed"
+capture_dir=$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/abyss-e2e.XXXXXX") || {
+  bad "could not create private screenshot directory"
+  capture_dir=
+}
+if [[ -n $capture_dir ]]; then
+  shot=$capture_dir/screenshot.png
+  (umask 077 && grim "$shot" 2>/dev/null) && ok "temporary screenshot: $shot" || bad "grim failed"
+fi
 check "progress is being saved (stats.json updated)" '[[ -n $(find "$STATE/stats.json" -mmin -1 2>/dev/null) ]]'
 check "pointer hidden while the screensaver runs" '[[ $(hyprctl getoption cursor:invisible -j | jq -r ".int // .bool") =~ ^(1|true)$ ]]'
 
