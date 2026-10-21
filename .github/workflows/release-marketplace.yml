@@ -45,6 +45,12 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Configure release bot identity
+        if: steps.credentials.outputs.ready == 'true'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
       - name: Tag release, refresh package checksum, and submit to marketplace
         if: steps.credentials.outputs.ready == 'true'
         env:
