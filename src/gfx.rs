@@ -7,10 +7,6 @@ pub fn lerp(a: Rgb, b: Rgb, t: f32) -> Rgb {
     [0, 1, 2].map(|i| (a[i] as f32 + (b[i] as f32 - a[i] as f32) * t).round() as u8)
 }
 
-pub fn scale(c: Rgb, k: f32) -> Rgb {
-    [0, 1, 2].map(|i| (c[i] as f32 * k).clamp(0.0, 255.0) as u8)
-}
-
 /// Pixel canvas. Every terminal cell holds two pixels (top and bottom half block).
 pub struct Frame {
     pub w: usize,
@@ -79,7 +75,7 @@ impl Frame {
 pub struct Overlay {
     w: usize,
     rows: usize,
-    cells: Vec<Option<(char, Rgb)>>,
+    cells: Vec<Option<(char, Rgb, u8)>>,
 }
 
 impl Overlay {
@@ -93,12 +89,23 @@ impl Overlay {
         }
         for (i, ch) in s.chars().enumerate() {
             if col + i < self.w {
-                self.cells[row * self.w + col + i] = Some((ch, fg));
+                self.cells[row * self.w + col + i] = Some((ch, fg, 28));
             }
         }
     }
 
-    fn get(&self, col: usize, row: usize) -> Option<(char, Rgb)> {
+    pub fn emphasized_text(&mut self, col: usize, row: usize, s: &str, fg: Rgb) {
+        if row >= self.rows {
+            return;
+        }
+        for (i, ch) in s.chars().enumerate() {
+            if col + i < self.w {
+                self.cells[row * self.w + col + i] = Some((ch, fg, 70));
+            }
+        }
+    }
+
+    fn get(&self, col: usize, row: usize) -> Option<(char, Rgb, u8)> {
         self.cells[row * self.w + col]
     }
 }
@@ -174,7 +181,7 @@ pub struct Presenter {
     /// The 2x4 source pixels and overlay cell each cell was last computed from: a cell whose
     /// inputs did not change is skipped before any colour fitting.
     src: Vec<[Rgb; 8]>,
-    ov: Vec<Option<(char, Rgb)>>,
+    ov: Vec<Option<(char, Rgb, u8)>>,
 }
 
 impl Presenter {
@@ -232,7 +239,11 @@ impl Presenter {
                 }
                 let cell = match o.get(c, r) {
                     // Dark plate behind text keeps the HUD readable on bright water.
-                    Some((ch, col)) => Cell { ch, fg: col, bg: scale([avg[0] as u8, avg[1] as u8, avg[2] as u8], 0.35) },
+                    Some((ch, col, plate)) => Cell {
+                        ch,
+                        fg: col,
+                        bg: lerp([avg[0] as u8, avg[1] as u8, avg[2] as u8], [4, 22, 38], plate as f32 / 100.0),
+                    },
                     None => {
                         let (mask, hi, lo) = split_two(&px);
                         if mask == 0 || mask == 63 {
@@ -315,7 +326,36 @@ mod tests {
         o.text(0, 0, "A", [255, 255, 255]);
         let with_text = present(&f, &o);
         assert!(with_text.contains('A'));
-        assert!(with_text.contains("48;2;7;14;28"), "plate is the local average colour at 35%");
+        assert!(with_text.contains("48;2;16;35;68"), "plate lightly blends the local water colour with a blue tint");
+    }
+
+    #[test]
+    fn emphasized_text_uses_a_darker_translucent_plate() {
+        let mut f = Frame::new(4, 8);
+        for y in 0..8 {
+            for x in 0..4 {
+                f.set(x, y, [200, 220, 230]);
+            }
+        }
+        let mut o = Overlay::new(2, 2);
+        o.text(0, 0, "N", [255, 255, 255]);
+        o.emphasized_text(1, 0, "→", [255, 255, 255]);
+        let rendered = present(&f, &o);
+        assert!(rendered.contains("48;2;145;165;176"), "ordinary text keeps the light plate");
+        assert!(rendered.contains("48;2;63;81;96"), "emphasized text darkens the plate");
+    }
+
+    #[test]
+    fn emphasized_plate_stays_dark_over_white_water() {
+        let mut f = Frame::new(4, 8);
+        for y in 0..8 {
+            for x in 0..4 {
+                f.set(x, y, [255, 255, 255]);
+            }
+        }
+        let mut o = Overlay::new(2, 2);
+        o.emphasized_text(0, 0, "→", [140, 230, 246]);
+        assert!(present(&f, &o).contains("48;2;79;92;103"));
     }
 
     #[test]

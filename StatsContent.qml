@@ -14,12 +14,50 @@ Column {
   readonly property string ff: host.font
   readonly property color gold: "#e8c25a"
   property int tab: 0
-  property string hint: ""
-  property string creatureHint: ""
+  property string selectedTrophyId: ""
+  property string hoveredTrophyId: ""
+  property string selectedCreatureId: ""
+  property string hoveredCreatureId: ""
+  property int keyboardIndex: 0
 
   spacing: Style.space(12)
 
   function tint(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
+  function trophyStatus(t) {
+    return t.unlocked
+      ? t.desc + " · Desbloqueado em " + host.fmtDay(t.day)
+      : t.desc + " · " + Math.round(t.progress * 100) + "% concluído"
+  }
+  function creatureStatus(c) {
+    return c.found
+      ? c.desc
+      : "Ainda não encontrada · zonas " + (c.zones[0] + 1) + "–" + (c.zones[1] + 1)
+  }
+  function findById(items, id) {
+    if (!items || !id) return null
+    for (var i = 0; i < items.length; i++) if (items[i].id === id) return items[i]
+    return null
+  }
+  function changeTab(direction) {
+    tab = (tab + direction + 5) % 5
+    keyboardIndex = 0
+  }
+  function moveSelection(dx, dy) {
+    var items = tab === 1 && s ? s.bestiary : tab === 2 && s ? s.trophies : null
+    if (tab === 4) {
+      keyboardIndex = Math.max(0, Math.min(1, keyboardIndex + dx))
+      return
+    }
+    if (!items || items.length === 0) return
+    var columns = tab === 2 ? 4 : Math.max(1, Math.floor((width + Style.space(6)) / (Style.space(30) + Style.space(6))))
+    var delta = dx !== 0 ? dx : dy * columns
+    keyboardIndex = Math.max(0, Math.min(items.length - 1, keyboardIndex + delta))
+  }
+  function activateSelection() {
+    if (tab === 1 && s && s.bestiary[keyboardIndex]) selectedCreatureId = s.bestiary[keyboardIndex].id
+    if (tab === 2 && s && s.trophies[keyboardIndex]) selectedTrophyId = s.trophies[keyboardIndex].id
+    if (tab === 4 && keyboardIndex < 2) host.setMode(keyboardIndex === 0 ? "abyss" : "default")
+  }
 
   // ---------- Missing program notice ----------
   Rectangle {
@@ -37,7 +75,7 @@ Column {
       anchors.right: parent.right
       anchors.margins: Style.space(10)
       textFormat: Text.PlainText
-      text: "O programa abyss não está instalado. Na pasta deste plugin (~/.config/omarchy/plugins/io.github.cesarfilho.abyss) rode ./install.sh --setup; veja o README."
+      text: "O programa abyss não está instalado. Na pasta deste plugin, rode ./install.sh --setup; veja o README."
       color: col.fg
       font.family: col.ff
       font.pixelSize: Style.font.caption
@@ -138,12 +176,16 @@ Column {
     spacing: Style.space(4)
 
     Repeater {
-      model: ["Resumo", "Missões", "Troféus", "Ajustes"]
+      model: ["Resumo", "Missões", "Troféus", "Cosméticos", "Ajustes"]
       Rectangle {
         required property var modelData
         required property int index
         readonly property bool on: col.tab === index
-        width: (parent.width - parent.spacing * 3) / 4
+        Accessible.role: Accessible.PageTab
+        Accessible.name: modelData
+        Accessible.selected: on
+        Accessible.description: on ? "Aba selecionada" : "Abrir aba"
+        width: (parent.width - parent.spacing * 4) / 5
         height: Style.space(28)
         radius: Style.space(8)
         color: on ? col.tint(col.accent, 0.28) : col.tint(col.fg, 0.07)
@@ -162,6 +204,57 @@ Column {
           anchors.fill: parent
           cursorShape: Qt.PointingHandCursor
           onClicked: col.tab = parent.index
+        }
+      }
+    }
+  }
+
+  // ---------- Cosmetic catalogue ----------
+  Column {
+    visible: col.tab === 3
+    width: parent.width
+    spacing: Style.space(8)
+    SectionLabel { text: "PALETAS COSMÉTICAS · SEM VANTAGEM DE JOGO" }
+    Repeater {
+      model: col.s ? col.s.cosmetics : []
+      Rectangle {
+        required property var modelData
+        width: parent.width
+        height: Style.space(42)
+        radius: Style.space(8)
+        color: col.tint(col.fg, 0.06)
+        border.width: modelData.selected ? 1 : 0
+        border.color: col.accent
+        Row {
+          anchors.fill: parent
+          anchors.margins: Style.space(9)
+          spacing: Style.space(8)
+          Text {
+            width: parent.width - Style.space(90)
+            anchors.verticalCenter: parent.verticalCenter
+            text: modelData.name + (modelData.selected ? " · selecionada" : "")
+            color: col.fg
+            font.family: col.ff
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
+          Rectangle {
+            width: Style.space(72); height: Style.space(24); radius: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
+            color: col.tint(col.accent, 0.2)
+            opacity: modelData.unlocked || (col.s && col.s.points >= modelData.cost) ? 1.0 : 0.45
+            Text {
+              anchors.centerIn: parent
+              text: modelData.unlocked ? (modelData.selected ? "Ativa" : "Usar") : modelData.cost + " pts"
+              color: col.fg; font.family: col.ff; font.pixelSize: Style.font.caption
+            }
+            MouseArea {
+              anchors.fill: parent
+              enabled: !modelData.selected && (modelData.unlocked || (col.s && col.s.points >= modelData.cost))
+              cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+              onClicked: col.host.cosmetic(modelData.unlocked ? "select" : "buy", modelData.id)
+            }
+          }
         }
       }
     }
@@ -227,50 +320,80 @@ Column {
 
   // ---------- Screensaver switch ----------
   Item {
-    visible: col.tab === 3
+    visible: col.tab === 4
     width: parent.width
-    height: Style.space(36)
+    height: modeSettings.implicitHeight
 
-    Rectangle {
-      anchors.fill: parent
-      radius: Style.space(10)
-      color: col.tint(col.fg, 0.07)
-    }
+    Column {
+      id: modeSettings
+      width: parent.width
+      spacing: Style.space(5)
 
-    Row {
-      anchors.fill: parent
-      anchors.margins: Style.space(3)
-      spacing: Style.space(3)
+      SectionLabel { text: "SCREENSAVER NA OCIOSIDADE" }
+      Text {
+        width: parent.width
+        textFormat: Text.PlainText
+        text: "Escolha o que aparece quando você se afasta."
+        color: col.dim
+        font.family: col.ff
+        font.pixelSize: Style.font.caption
+      }
 
-      Repeater {
-        model: [
-          { key: "abyss", label: "󰈺  Abyss" },
-          { key: "default", label: "󰹑  Padrão Omarchy" }
-        ]
+      Item {
+        width: parent.width
+        height: Style.space(36)
+
         Rectangle {
-          required property var modelData
-          readonly property bool on: col.host.mode === modelData.key
-          width: (parent.width - parent.spacing) / 2
-          height: parent.height
-          radius: Style.space(8)
-          color: on ? col.tint(col.accent, 0.28) : "transparent"
-          border.width: on ? 1 : 0
-          border.color: col.tint(col.accent, 0.8)
-          Behavior on color { ColorAnimation { duration: 160 } }
+          anchors.fill: parent
+          radius: Style.space(10)
+          color: col.tint(col.fg, 0.07)
+        }
 
-          Text {
-            anchors.centerIn: parent
-            textFormat: Text.PlainText
-            text: parent.modelData.label
-            color: parent.on ? col.fg : col.dim
-            font.family: col.ff
-            font.pixelSize: Style.font.bodySmall
-            font.bold: parent.on
-          }
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: col.host.setMode(parent.modelData.key)
+        Row {
+          anchors.fill: parent
+          anchors.margins: Style.space(3)
+          spacing: Style.space(3)
+
+          Repeater {
+            model: [
+              { key: "abyss", label: "󰈺  Abyss" },
+              { key: "default", label: "󰹑  Padrão Omarchy" }
+            ]
+            Rectangle {
+              required property var modelData
+              required property int index
+              readonly property bool on: col.host.mode === modelData.key
+              width: (parent.width - parent.spacing) / 2
+              height: parent.height
+              radius: Style.space(8)
+              Accessible.role: Accessible.RadioButton
+              Accessible.name: modelData.key === "abyss" ? "Abyss" : "Screensaver padrão do Omarchy"
+              Accessible.focused: col.keyboardIndex === index
+              Accessible.checkable: true
+              Accessible.checked: on
+              color: on ? col.tint(col.accent, 0.28) : "transparent"
+              border.width: col.keyboardIndex === index ? 2 : on ? 1 : 0
+              border.color: col.keyboardIndex === index ? col.accent : col.tint(col.accent, 0.8)
+              Behavior on color { ColorAnimation { duration: 160 } }
+
+              Text {
+                anchors.centerIn: parent
+                textFormat: Text.PlainText
+                text: parent.modelData.label
+                color: parent.on ? col.fg : col.dim
+                font.family: col.ff
+                font.pixelSize: Style.font.bodySmall
+                font.bold: parent.on
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  col.keyboardIndex = parent.index
+                  col.host.setMode(parent.modelData.key)
+                }
+              }
+            }
           }
         }
       }
@@ -279,7 +402,7 @@ Column {
 
   // ---------- Resolution ----------
   Row {
-    visible: col.tab === 3
+    visible: col.tab === 4
     width: parent.width
     spacing: Style.space(8)
 
@@ -335,7 +458,7 @@ Column {
 
   // ---------- Idle time ----------
   Row {
-    visible: col.tab === 3
+    visible: col.tab === 4
     width: parent.width
     spacing: Style.space(8)
 
@@ -391,7 +514,7 @@ Column {
 
   // ---------- Actions ----------
   Row {
-    visible: col.tab === 3
+    visible: col.tab === 4
     width: parent.width
     spacing: Style.space(8)
     property bool confirmReset: false
@@ -524,7 +647,7 @@ Column {
       anchors.right: parent.right
       anchors.margins: Style.space(10)
       textFormat: Text.PlainText
-      text: col.s && col.s.season ? "≈ " + col.s.season.name + " · XP ×" + col.s.season.boost + " · " + col.s.season.desc : ""
+      text: col.s && col.s.season ? "≈ " + col.s.season.name + " · " + col.s.season.desc : ""
       color: col.fg
       font.family: col.ff
       font.pixelSize: Style.font.caption
@@ -601,18 +724,16 @@ Column {
       width: parent.width
       SectionLabel {
         text: "BESTIÁRIO  " + (col.s ? col.s.bestiary.filter(function(c) { return c.found }).length : 0) + " / " + (col.s ? col.s.bestiary.length : 0)
-        width: parent.width / 2
       }
-      Text {
-        width: parent.width / 2
-        horizontalAlignment: Text.AlignRight
-        textFormat: Text.PlainText
-        text: col.creatureHint
-        color: col.dim
-        font.family: col.ff
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
-      }
+    }
+    Text {
+      width: parent.width
+      textFormat: Text.PlainText
+      text: "Setas navegam · clique ou Enter abre · Tab troca de aba"
+      color: col.dim
+      font.family: col.ff
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
     }
 
     Flow {
@@ -623,10 +744,18 @@ Column {
         Rectangle {
           id: creature
           required property var modelData
+          required property int index
           width: Style.space(30)
           height: Style.space(22)
           radius: Style.space(8)
+          Accessible.role: Accessible.Button
+          Accessible.name: modelData.found ? modelData.name : "Criatura ainda não encontrada"
+          Accessible.focused: col.keyboardIndex === index
+          Accessible.selected: col.selectedCreatureId === modelData.id
+          Accessible.description: col.creatureStatus(modelData)
           color: modelData.found ? col.tint(col.accent, 0.18) : col.tint(col.fg, 0.06)
+          border.width: col.keyboardIndex === index ? 2 : 0
+          border.color: col.keyboardIndex === index ? col.accent : "transparent"
           Text {
             anchors.centerIn: parent
             textFormat: Text.PlainText
@@ -639,11 +768,53 @@ Column {
           MouseArea {
             anchors.fill: parent
             hoverEnabled: true
-            onEntered: col.creatureHint = creature.modelData.found
-              ? creature.modelData.name + " · " + creature.modelData.desc
-              : "zonas " + (creature.modelData.zones[0] + 1) + "–" + (creature.modelData.zones[1] + 1)
-            onExited: col.creatureHint = ""
+            onEntered: col.hoveredCreatureId = creature.modelData.id
+            onExited: col.hoveredCreatureId = ""
+            onClicked: {
+              col.keyboardIndex = creature.index
+              col.selectedCreatureId = creature.modelData.id
+            }
           }
+        }
+      }
+    }
+
+    Rectangle {
+      readonly property var creature: col.findById(col.s ? col.s.bestiary : null, col.hoveredCreatureId || col.selectedCreatureId)
+      visible: creature !== null
+      width: parent.width
+      height: visible ? creatureDetails.implicitHeight + Style.space(16) : 0
+      radius: Style.space(8)
+      color: col.tint(col.accent, 0.12)
+      border.width: 1
+      border.color: col.tint(col.accent, 0.35)
+
+      Column {
+        id: creatureDetails
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: Style.space(8)
+        spacing: Style.space(3)
+
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: parent.parent.creature
+            ? (parent.parent.creature.found ? parent.parent.creature.name : "Descoberta pendente") : ""
+          color: col.fg
+          font.family: col.ff
+          font.pixelSize: Style.font.bodySmall
+          font.bold: true
+        }
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: parent.parent.creature ? col.creatureStatus(parent.parent.creature) : ""
+          color: col.dim
+          font.family: col.ff
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
         }
       }
     }
@@ -659,18 +830,16 @@ Column {
       width: parent.width
       SectionLabel {
         text: "TROFÉUS  " + col.host.unlockedCount() + " / " + (col.s ? col.s.trophies.length : 0)
-        width: parent.width / 2
       }
-      Text {
-        width: parent.width / 2
-        horizontalAlignment: Text.AlignRight
-        textFormat: Text.PlainText
-        text: col.hint
-        color: col.dim
-        font.family: col.ff
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
-      }
+    }
+    Text {
+      width: parent.width
+      textFormat: Text.PlainText
+      text: "Setas navegam · clique ou Enter abre · Tab troca de aba"
+      color: col.dim
+      font.family: col.ff
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
     }
 
     Grid {
@@ -685,12 +854,18 @@ Column {
         Rectangle {
           id: badge
           required property var modelData
+          required property int index
           width: badges.cell
           height: Style.space(50)
           radius: Style.space(8)
+          Accessible.role: Accessible.Button
+          Accessible.name: modelData.name
+          Accessible.focused: col.keyboardIndex === index
+          Accessible.selected: col.selectedTrophyId === modelData.id
+          Accessible.description: col.trophyStatus(modelData)
           color: modelData.unlocked ? col.tint(col.gold, 0.16) : col.tint(col.fg, 0.06)
-          border.width: modelData.unlocked ? 1 : 0
-          border.color: col.tint(col.gold, 0.55)
+          border.width: col.keyboardIndex === index ? 2 : modelData.unlocked ? 1 : 0
+          border.color: col.keyboardIndex === index ? col.accent : col.tint(col.gold, 0.55)
 
           Column {
             anchors.centerIn: parent
@@ -738,11 +913,52 @@ Column {
           MouseArea {
             anchors.fill: parent
             hoverEnabled: true
-            onEntered: col.hint = badge.modelData.unlocked
-              ? badge.modelData.name + " · " + col.host.fmtDay(badge.modelData.day)
-              : badge.modelData.desc + " · " + Math.round(badge.modelData.progress * 100) + "%"
-            onExited: col.hint = ""
+            onEntered: col.hoveredTrophyId = badge.modelData.id
+            onExited: col.hoveredTrophyId = ""
+            onClicked: {
+              col.keyboardIndex = badge.index
+              col.selectedTrophyId = badge.modelData.id
+            }
           }
+        }
+      }
+    }
+
+    Rectangle {
+      readonly property var trophy: col.findById(col.s ? col.s.trophies : null, col.hoveredTrophyId || col.selectedTrophyId)
+      visible: trophy !== null
+      width: parent.width
+      height: visible ? trophyDetails.implicitHeight + Style.space(16) : 0
+      radius: Style.space(8)
+      color: col.tint(trophy && trophy.unlocked ? col.gold : col.accent, 0.12)
+      border.width: 1
+      border.color: col.tint(trophy && trophy.unlocked ? col.gold : col.accent, 0.35)
+
+      Column {
+        id: trophyDetails
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: Style.space(8)
+        spacing: Style.space(3)
+
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: parent.parent.trophy ? parent.parent.trophy.name : ""
+          color: col.fg
+          font.family: col.ff
+          font.pixelSize: Style.font.bodySmall
+          font.bold: true
+        }
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: parent.parent.trophy ? col.trophyStatus(parent.parent.trophy) : ""
+          color: col.dim
+          font.family: col.ff
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
         }
       }
     }

@@ -1,5 +1,5 @@
 //! Achievement banners in the same style as the HUD: terminal text on a dark plate. The plate
-//! slides down from the top row by row, the text types itself in, then it slides back up.
+//! slides below the HUD, the text types itself in, then it slides back up.
 
 use std::collections::VecDeque;
 
@@ -15,7 +15,8 @@ const TOTAL: f32 = SLIDE_IN + TYPE + HOLD + SLIDE_OUT;
 
 /// Rows of the plate: a blank row above and below the four text lines.
 const PLATE_ROWS: i32 = 6;
-const REST_ROW: i32 = 1;
+const START_ROW: i32 = 6;
+const REST_ROW: i32 = 8;
 
 struct Toast {
     colors: [Rgb; 4],
@@ -33,16 +34,30 @@ fn ease_out(p: f32) -> f32 {
     1.0 - (1.0 - p).powi(3)
 }
 
+fn plate_top(t: f32) -> i32 {
+    if t < SLIDE_IN {
+        let p = ease_out((t / SLIDE_IN).clamp(0.0, 1.0));
+        (START_ROW as f32 + (REST_ROW - START_ROW) as f32 * p).round() as i32
+    } else if t > TOTAL - SLIDE_OUT {
+        let p = ((t - (TOTAL - SLIDE_OUT)) / SLIDE_OUT).clamp(0.0, 1.0);
+        (REST_ROW as f32 - (REST_ROW - START_ROW) as f32 * p * p).round() as i32
+    } else {
+        REST_ROW
+    }
+}
+
 impl Toasts {
     pub fn new(pal: Palette) -> Self {
         Self { queue: VecDeque::new(), current: None, pal }
     }
 
+    pub fn set_palette(&mut self, pal: Palette) { self.pal = pal; }
+
     pub fn push_season(&mut self, s: &Season) {
         let p = self.pal;
         self.queue.push_back(Toast {
             colors: [p.cyan, p.text, p.dim, p.gold],
-            lines: ["≈ EVENTO DE TEMPORADA ≈".into(), s.name.to_uppercase(), s.desc.to_string(), format!("XP ×{}", state::SEASON_XP_BOOST)],
+            lines: ["≈ EVENTO DE TEMPORADA ≈".into(), s.name.to_uppercase(), s.desc.to_string(), "Evento visual · troféu sazonal ativo".into()],
             t: 0.0,
         });
     }
@@ -121,16 +136,8 @@ impl Toasts {
         let width = widest + 6;
         let left = cols.saturating_sub(width) / 2;
 
-        // Plate position in rows: eases down, rests, eases back up.
-        let top = if c.t < SLIDE_IN {
-            let p = ease_out((c.t / SLIDE_IN).clamp(0.0, 1.0));
-            (-PLATE_ROWS as f32 + (REST_ROW + PLATE_ROWS) as f32 * p).round() as i32
-        } else if c.t > TOTAL - SLIDE_OUT {
-            let p = ((c.t - (TOTAL - SLIDE_OUT)) / SLIDE_OUT).clamp(0.0, 1.0);
-            (REST_ROW as f32 - (REST_ROW + PLATE_ROWS) as f32 * p * p).round() as i32
-        } else {
-            REST_ROW
-        };
+        // Enter below the HUD, so notifications never obscure its instruments.
+        let top = plate_top(c.t);
 
         let typed = ((c.t - SLIDE_IN) / TYPE).clamp(0.0, 1.0);
         let total: usize = c.lines.iter().map(|l| l.chars().count()).sum();
@@ -157,6 +164,19 @@ impl Toasts {
             if let Some(r) = row_at(i as i32 + 1) {
                 o.text(left, r, &text, c.colors[i]);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod position_tests {
+    use super::*;
+
+    #[test]
+    fn notification_never_overlaps_the_hud() {
+        for step in 0..=100 {
+            let t = TOTAL * step as f32 / 100.0;
+            assert!(plate_top(t) >= START_ROW);
         }
     }
 }

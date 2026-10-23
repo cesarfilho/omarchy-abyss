@@ -1,5 +1,11 @@
 mod landmarks;
+mod ocean;
 mod scenery;
+mod tide;
+pub use tide::{Direction, Tide};
+#[cfg(test)]
+use tide::temperature_c;
+pub use ocean::{Region, SeaState, compass_name, region_by_id, region_for_session};
 
 use crate::gfx::{Frame, Rgb, lerp};
 use crate::path::Path;
@@ -33,9 +39,14 @@ const PLANES: [(f32, f32, f32, f32, f32, f32); 5] = [
     (0.19, 0.050, 0.021, 0.057, 0.25, 0.20),
 ];
 
-/// Depth z runs 0 (nearest) .. 1 (farthest). Size and speed shrink with distance.
+/// Depth z runs 0 (nearest) .. 1 (farthest). Sprite size shrinks with distance.
 fn scale_z(z: f32) -> f32 {
     1.2 - 0.7 * z
+}
+
+/// Fish in the first depth slice can briefly fill the lens instead of sharing the usual scale.
+fn near_fish_scale(z: f32) -> f32 {
+    1.0 + 3.8 * (1.0 - z / 0.18).clamp(0.0, 1.0)
 }
 
 fn slot_of(z: f32) -> usize {
@@ -144,6 +155,7 @@ struct Jelly {
     phase: f32,
 }
 
+#[derive(Debug, PartialEq)]
 struct Whale {
     x: f32,
     y: f32,
@@ -166,12 +178,18 @@ pub struct World {
     refw: f32,
     px_scale: i32,
     tt: f64,
+    tide: Tide,
+    journey: Option<(Region, f64)>,
+    depth_m: u32,
+    sea: SeaState,
     t: f32,
     zf: f32,
     reef: u32,
     night: bool,
     fishes: Vec<Fish>,
     paths: Vec<Path>,
+    /// Shared swim pace, sampled from the lens-close fish's original route.
+    cruise_speed: f64,
     shark: Option<SharkRun>,
     /// Snapshot/test aid: show this landmark (index into `KINDS`) on every candidate spot.
     force_landmark: Option<usize>,
@@ -203,12 +221,17 @@ impl World {
             refw: h as f32 * 16.0 / 9.0,
             px_scale: 1,
             tt: now_secs(),
+            tide: Tide::at(0.0, h as f64 * 16.0 / 9.0 / 220.0),
+            journey: None,
+            depth_m: 0,
+            sea: SeaState::at(ocean::REGIONS[0], 0.0, 0.0, 0, 1.0),
             t: 0.0,
             zf,
             reef,
             night,
             fishes: Vec::new(),
             paths: Vec::new(),
+            cruise_speed: 0.0,
             shark: None,
             force_landmark: None,
             shark_key: None,
@@ -228,6 +251,8 @@ impl World {
         };
         world.px_scale = scale_for(world.refw);
         world.t = (world.tt % 100_000.0) as f32;
+        world.tide = Tide::at(world.tt, world.unit() as f64);
+        world.refresh_sea();
         world.populate();
         world
     }
@@ -237,6 +262,8 @@ impl World {
         self.fixed = Some(t);
         self.tt = t;
         self.t = (t % 100_000.0) as f32;
+        self.tide = Tide::at(t, self.unit() as f64);
+        self.refresh_sea();
         self.populate();
         self.refresh_shark();
         self
@@ -274,6 +301,27 @@ impl World {
         }
     }
 
+    pub fn set_journey(&mut self, region: Region, started_at: f64) {
+        let changed = self.journey.map(|(previous, _)| previous.id) != Some(region.id);
+        self.journey = Some((region, started_at));
+        self.refresh_sea();
+        if changed { self.populate(); }
+    }
+
+    pub fn set_depth(&mut self, depth_m: u32) {
+        self.depth_m = depth_m;
+        self.refresh_sea();
+    }
+
+    fn refresh_sea(&mut self) {
+        let (region, started_at) = self.journey.unwrap_or((ocean::REGIONS[0], self.tt));
+        self.sea = SeaState::at(region, started_at, self.tt, self.depth_m, self.unit() as f64);
+    }
+
+    pub fn sea(&self) -> SeaState {
+        self.sea
+    }
+
     fn is_season(&self, id: &str) -> bool {
         self.season == Some(id)
     }
@@ -296,7 +344,14 @@ impl World {
     }
 
     fn cam64(&self) -> f64 {
-        self.tt * 5.0 * self.unit() as f64
+        if self.journey.is_some() { self.sea.camera_x } else { self.tide.camera_x }
+    }
+
+    /// Candidate cells that can touch this monitor after the camera and parallax transform.
+    fn visible_cells(&self, spacing: f64, speed: f64, reach: f64) -> std::ops::RangeInclusive<i64> {
+        let left = self.cam64() * speed + self.off as f64 - reach;
+        let right = self.cam64() * speed + self.off as f64 + self.w as f64 + reach;
+        (left / spacing).floor() as i64..=(right / spacing).ceil() as i64
     }
 
     /// Builds every moving thing from fixed seeds, so all monitors get the identical world.
@@ -306,20 +361,24 @@ impl World {
         self.fishes.clear();
         let mut g = Gen(mix(SEED, 100 + self.gen_zone as u64));
         let target = 8 + self.reef as usize;
+        let cold_shallows = self.journey.is_some_and(|(region, _)| region.surface_c < 20.0) && self.gen_zone <= 1;
         let ok: Vec<usize> = SPECIES
             .iter()
             .enumerate()
-            .filter(|(_, s)| (s.zones.0..=s.zones.1).contains(&self.gen_zone))
+            .filter(|(_, s)| if cold_shallows { s.id == "silver" } else { (s.zones.0..=s.zones.1).contains(&self.gen_zone) })
             .map(|(i, _)| i)
             .collect();
         self.present = ok.iter().map(|&i| SPECIES[i].id).collect();
         self.paths.clear();
+        self.cruise_speed = 0.0;
         let h = self.h as f32;
         while !ok.is_empty() && self.fishes.len() < target {
             let species = ok[g.below(ok.len() as u32) as usize];
             let sp = &SPECIES[species];
             let school_z = g.range(0.0, 1.0);
-            let speed = g.range(sp.speed.0, sp.speed.1) * self.unit() * scale_z(school_z);
+            let sampled_speed = g.range(sp.speed.0, sp.speed.1) * self.unit() * scale_z(school_z);
+            if self.paths.is_empty() { self.cruise_speed = sampled_speed as f64; }
+            let speed = self.cruise_speed as f32;
             let sprite_w = self.refw * sp.len * scale_z(school_z);
             // Every school (or loner) picks its own heading and wanders in a band of the water column.
             let ymid = g.range(0.25, 0.5) * h;
@@ -343,29 +402,32 @@ impl World {
                 });
             }
         }
+        if let Some(fish) = self.fishes.first_mut() {
+            fish.z = 0.03;
+        }
 
         let mut g = Gen(mix(SEED, 200));
-        let n_bubbles = ((self.pano / 4.0) as usize).clamp(20, 160);
+        let n_bubbles = ((self.pano / 20.0) as usize).clamp(8, 120);
         self.bubbles = (0..n_bubbles)
             .map(|_| Bubble {
                 z: g.range(0.0, 1.0),
                 x: g.range(0.0, self.pano),
                 y0: g.range(0.0, self.h as f32 * 1.1),
-                vy: g.range(6.0, 16.0) * self.unit(),
+                vy: g.range(2.0, 6.0) * self.unit(),
                 phase: g.range(0.0, std::f32::consts::TAU),
                 big: g.chance(0.2),
             })
             .collect();
-        let n_snow = ((self.pano / 6.0) as usize).min(220);
+        let n_snow = ((self.pano / 12.0) as usize).min(120);
         self.snow = (0..n_snow)
-            .map(|_| Snow { x: g.range(0.0, self.pano), y0: g.range(0.0, self.h as f32), vy: g.range(1.5, 5.0) * self.unit() })
+            .map(|_| Snow { x: g.range(0.0, self.pano), y0: g.range(0.0, self.h as f32), vy: g.range(0.3, 1.0) * self.unit() })
             .collect();
         self.jellies = (0..5)
             .map(|_| {
                 let z = g.range(0.0, 0.9);
                 let ymid = g.range(0.25, 0.5) * h;
                 let r = (g.range(0.05, 0.15) * h).min(ymid - 0.12 * h).max(2.0);
-                let speed = g.range(2.0, 5.0) * self.unit();
+                let speed = g.range(1.0, 3.0) * self.unit();
                 Jelly { z, path: Path::new(&mut g, speed as f64, ymid as f64, r as f64), phase: g.range(0.0, std::f32::consts::TAU) }
             })
             .collect();
@@ -382,6 +444,8 @@ impl World {
         self.off = layout.off as f32;
         self.refw = h as f32 * 16.0 / 9.0;
         self.px_scale = scale_for(self.refw);
+        self.tide = Tide::at(self.tt, self.unit() as f64);
+        self.refresh_sea();
         self.populate();
         self.refresh_shark();
     }
@@ -391,7 +455,7 @@ impl World {
         if self.zf >= 4.0 {
             return None;
         }
-        let odds = if self.is_season("oceans") { 90 } else { 40 };
+        let odds = 40;
         let k = (tt / WHALE_WINDOW).floor();
         let r = mix(SEED, 300 + k as u64);
         if r % 100 >= odds {
@@ -431,6 +495,8 @@ impl World {
         let mut events = Vec::new();
         self.tt = self.now();
         self.t = (self.tt % 100_000.0) as f32;
+        self.tide = Tide::at(self.tt, self.unit() as f64);
+        self.refresh_sea();
         self.zf += (zf - self.zf) * 0.02;
         self.reef = reef;
         self.night = night;
@@ -474,9 +540,17 @@ impl World {
         let (top, bot) = (lerp(ZONE_WATER[i].0, ZONE_WATER[j].0, t), lerp(ZONE_WATER[i].1, ZONE_WATER[j].1, t));
         match self.pal.water {
             // The theme colours the shallows lightly and the deep more, since the deep is nearly black anyway.
-            Some((t_top, t_bot)) => (lerp(top, t_top, 0.18), lerp(bot, t_bot, 0.3)),
-            None => (top, bot),
+            Some((t_top, t_bot)) => self.regional_water(lerp(top, t_top, 0.18), lerp(bot, t_bot, 0.3)),
+            None => self.regional_water(top, bot),
         }
+    }
+
+    fn regional_water(&self, top: Rgb, bot: Rgb) -> (Rgb, Rgb) {
+        if self.journey.is_none() { return (top, bot); }
+        let cool = ((24.0 - self.sea.temperature_c) / 24.0).clamp(0.0, 1.0);
+        let murk = (self.sea.storm * 0.25 + self.sea.upwelling * 0.3).clamp(0.0, 0.4);
+        let tint = lerp([24, 90, 138], [18, 116, 102], self.sea.upwelling);
+        (lerp(top, tint, cool * 0.13 + murk), lerp(bot, tint, cool * 0.10 + murk * 0.5))
     }
 
     fn jelly_count(&self) -> usize {
@@ -495,6 +569,8 @@ impl World {
         let mut base = if self.night { 0.25 } else { 0.0 } + deep * 0.2;
         if self.is_season("halloween") || self.is_season("xmas") {
             base = base.max(0.55);
+        } else if self.is_season("oceans") {
+            base = base.max(0.35);
         }
         (self.bloom_strength() + base).min(1.0)
     }
@@ -503,6 +579,7 @@ impl World {
         match self.season {
             Some("halloween") => lerp([255, 140, 30], [170, 70, 230], hue),
             Some("xmas") => [[255, 70, 70], [80, 230, 110], [255, 215, 90]][(hue * 3.0) as usize % 3],
+            Some("oceans") => lerp([70, 190, 220], [40, 115, 205], hue),
             _ => lerp(self.pal.glow.0, self.pal.glow.1, hue),
         }
     }
@@ -513,7 +590,7 @@ impl World {
 
     /// Haze toward the water colour: depth of the zone plus distance from the camera.
     fn fog_z(&self, z: f32) -> f32 {
-        (self.fog() + 0.45 * z).min(0.82)
+        (self.fog() + 0.45 * z + if self.journey.is_some() { (30.0 - self.sea.visibility_m) / 150.0 } else { 0.0 }).min(0.82)
     }
 
     pub fn draw(&self, f: &mut Frame) {
@@ -547,6 +624,7 @@ impl World {
         }
         self.draw_foreground(f, bot);
         self.draw_bubbles(f, false);
+        self.draw_near_fish(f, bot);
     }
 
     /// Vertical gradient, light rays and ordered dithering. Done a row at a time: the gradient is
@@ -554,7 +632,8 @@ impl World {
     /// table (sampled every 1/20 pixel, where `0.45 y` lands exactly on whole table steps).
     fn draw_water(&self, f: &mut Frame, top: Rgb, bot: Rgb) {
         const STEP: usize = 20;
-        let ray_strength = (1.0 - self.zf / 3.0).max(0.0) * 0.8;
+        let visibility = if self.journey.is_some() { self.sea.visibility_m / 30.0 } else { 1.0 };
+        let ray_strength = (1.0 - self.zf / 3.0).max(0.0) * 0.8 * visibility;
         let dim = 1.0 - 0.35 * if self.night { 1.0 } else { 0.0 } * (1.0 - (self.zf / 3.0).min(1.0));
         let h = self.h as f32;
         let k = self.px_scale as f32;
@@ -562,7 +641,7 @@ impl World {
         let table: Vec<f32> = if rays {
             (0..=STEP * self.w + 9 * self.h)
                 .map(|i| {
-                    let u = (i as f32 / STEP as f32 + self.off) / k - self.t * 2.5;
+                    let u = (i as f32 / STEP as f32 + self.off) / k - self.t * 1.25;
                     (u * 0.045).sin() * 0.5 + (u * 0.11 + 1.3).sin() * 0.5
                 })
                 .collect()
@@ -605,7 +684,8 @@ impl World {
         let hh = self.h as f64;
         for s in &self.snow {
             let y = ((s.y0 as f64 + s.vy as f64 * self.tt) % hh) as i32;
-            let x = (s.x - self.off) as i32;
+            let drift = if self.journey.is_some() { self.sea.camera_x * 0.024 } else { 0.0 };
+            let x = ((s.x as f64 + drift).rem_euclid(self.pano as f64) - self.off as f64) as i32;
             if x >= -4 && x < self.w as i32 + 4 {
                 f.dot(x, y, self.px_scale, [200, 215, 230], a * 0.6);
             }
@@ -680,7 +760,7 @@ impl World {
                 continue;
             }
             let cx = fx + len * 0.5;
-            let floor = self.floor_y(slot, cx.clamp(0.0, self.w as f32 - 1.0));
+            let floor = self.floor_y(slot, cx);
             let y = pose.y;
             let dist = floor - (y + len * 0.35);
             if dist <= 0.0 || dist > reach {
@@ -712,14 +792,17 @@ impl World {
         }
         // A few kelp blades swaying from the rocks.
         let unit = self.unit();
-        let period = (self.pano * 1.4) as f64;
-        for i in 0..5 {
-            let wx = i as f64 * period / 5.0 + (i * 37 % 11) as f64 * unit as f64;
-            let sx = ((wx - self.cam64() * speed).rem_euclid(period) - period * 0.1) as f32 - self.off;
-            let hh = h * (0.13 + 0.03 * (i % 3) as f32);
+        let spacing = 160.0 * unit as f64;
+        for i in self.visible_cells(spacing, speed, 25.0 * unit as f64) {
+            let seed = mix(8_000, i as u64);
+            let wx = (i as f64 + 0.15 + 0.7 * ((seed >> 40) as f64 / (1u64 << 24) as f64)) * spacing;
+            let sx = (wx - self.cam64() * speed) as f32 - self.off;
+            if sx < -20.0 * unit || sx > self.w as f32 + 20.0 * unit { continue; }
+            let hh = h * (0.13 + 0.03 * (i.rem_euclid(3)) as f32);
             let base = h - h * 0.03;
             for k in 0..(hh as i32) {
-                let sway = (self.t * 0.9 + k as f32 * 0.06 + i as f32).sin() * (k as f32 / hh) * 3.0 * unit;
+                let force = if self.journey.is_some() { 1.0 + self.sea.flow_knots.abs() as f32 * 0.25 + self.sea.storm } else { 1.0 };
+                let sway = (self.t * 0.45 * force + k as f32 * 0.06 + (seed & 255) as f32).sin() * (k as f32 / hh) * 3.0 * unit * force;
                 let px = sx + sway;
                 let wdt = ((1.0 - k as f32 / hh) * 4.0 * unit).max(2.0) as i32;
                 for dx in 0..wdt {
@@ -734,26 +817,23 @@ impl World {
         let z = slot as f32 / 4.0;
         let cs = scale_z(z);
         let sc = (self.unit() * cs).round().max(1.0) as i32;
-        let period = (23.0 * self.unit() as f64 * 30.0).max(self.pano as f64 + 40.0 * self.unit() as f64);
-        let spacing = period / 30.0;
+        let spacing = 23.0 * self.unit() as f64;
         let fog = self.fog_z(z);
         let speed = PLANES[slot].4 as f64;
-        for i in (0..count).filter(|i| i % 2 == slot) {
-            let jitter = ((i * 2654435761usize) % 11) as f64 * sc as f64;
+        for i in self.visible_cells(spacing, speed, 30.0 * self.unit() as f64) {
+            let slot_index = i.rem_euclid(30) as usize;
+            if slot_index >= count || slot_index % 2 != slot { continue; }
+            let seed = mix(23_000 + slot as u64, i as u64);
+            let jitter = (seed % 11) as f64 * sc as f64;
             let wx = i as f64 * spacing + jitter;
-            let mut sx = (wx - self.cam64() * speed).rem_euclid(period) - self.off as f64;
-            if sx > self.w as f64 + 30.0 {
-                sx -= period;
-            }
-            if sx < -30.0 {
-                continue;
-            }
+            let sx = wx - self.cam64() * speed - self.off as f64;
+            if sx < -30.0 || sx > self.w as f64 + 30.0 { continue; }
             let sx = sx as f32;
             let x = sx as i32;
-            let fy = self.floor_y(slot, sx.clamp(0.0, self.w as f32 - 1.0)) as i32 + 1;
-            let h = ((5 + (i % 4) as i32 * 2) as f32 * self.unit() * cs) as i32;
-            let sway = ((self.t * 0.8 + i as f32).sin() * 1.2).round() as i32;
-            let kind = i % 3;
+            let fy = self.floor_y(slot, sx) as i32 + 1;
+            let h = ((5 + (slot_index % 4) as i32 * 2) as f32 * self.unit() * cs) as i32;
+            let sway = ((self.t * 0.8 + (seed & 255) as f32).sin() * 1.2).round() as i32;
+            let kind = (seed % 3) as usize;
             let base_col = [[232, 92, 142], [242, 142, 60], [152, 92, 222]][kind];
             let col = lerp(base_col, bot, fog);
             let tip = lerp(base_col, [255, 255, 255], 0.35);
@@ -791,9 +871,12 @@ impl World {
     fn draw_bubbles(&self, f: &mut Frame, far: bool) {
         let hh = self.h as f64 * 1.1;
         for b in self.bubbles.iter().filter(|b| (b.z > 0.5) == far) {
-            let k = ((self.px_scale as f32 * scale_z(b.z) + 1.0) / 2.0).max(1.0) as i32;
-            let y = (self.h as f64 * 1.02 - (b.y0 as f64 + b.vy as f64 * self.tt) % hh) as i32;
-            let x = (b.x - self.off + (self.t * 1.6 + b.phase).sin() * 2.0 * k as f32) as i32;
+            let compression = if self.journey.is_some() { (self.sea.pressure_bar / 100.0).max(1.0).powf(-0.12) } else { 1.0 };
+            let k = (((self.px_scale as f32 * scale_z(b.z) + 1.0) / 2.0) * compression).max(1.0) as i32;
+            let buoyancy = if self.journey.is_some() { 1.0 + (self.sea.salinity_psu - 35.0) as f64 * 0.01 } else { 1.0 };
+            let y = (self.h as f64 * 1.02 - (b.y0 as f64 + b.vy as f64 * buoyancy * self.tt) % hh) as i32;
+            let drift = if self.journey.is_some() { self.sea.camera_x * 0.048 } else { 0.0 };
+            let x = ((b.x as f64 + drift).rem_euclid(self.pano as f64) - self.off as f64 + (self.t * 0.8 + b.phase).sin() as f64 * 2.0 * k as f64) as i32;
             if x < -6 || x > self.w as i32 + 6 {
                 continue;
             }
@@ -809,7 +892,7 @@ impl World {
     }
 
     fn draw_fish(&self, f: &mut Frame, bot: Rgb, slot: usize) {
-        for fish in self.fishes.iter().filter(|fi| slot_of(fi.z) == slot) {
+        for fish in self.fishes.iter().skip(1).filter(|fi| slot_of(fi.z) == slot) {
             let sp = &SPECIES[fish.species];
             let len = (self.refw * sp.len * scale_z(fish.z)) as i32;
             let pose = self.fish_pose(fish);
@@ -818,13 +901,26 @@ impl World {
                 continue;
             }
             let fog = (bot, self.fog_z(fish.z));
-            let floor = self.floor_y(slot, (fx + len as f32 * 0.5).clamp(0.0, self.w as f32 - 1.0));
+            let floor = self.floor_y(slot, fx + len as f32 * 0.5);
             let y = pose.y.min(floor - len as f32 * 0.55);
             // Nose up or down with the heading (a vertical shear in the sprite), capped so a turn never rolls the fish.
             let pitch = pose.vy.atan2(pose.vx.abs().max(0.001)).clamp(-0.5, 0.5);
             // Distant fish lose their dark outline: at that size it only muddies them.
             let outline = len >= 14 && fish.z < 0.65;
             sprites::draw_fish(f, sp.kind, fx as i32, y as i32, len, pose.vx < 0.0, pitch, self.t * fish.freq + fish.phase, fog, outline);
+        }
+    }
+
+    fn draw_near_fish(&self, f: &mut Frame, bot: Rgb) {
+        if let Some(fish) = self.fishes.first() {
+            let sp = &SPECIES[fish.species];
+            let len = (self.refw * sp.len * scale_z(fish.z) * near_fish_scale(fish.z)) as i32;
+            let pose = self.fish_pose(fish);
+            if pose.x < -(len as f32) || pose.x > self.w as f32 { return; }
+            let pitch = pose.vy.atan2(pose.vx.abs().max(0.001)).clamp(-0.5, 0.5);
+            let x = (pose.x + self.off).floor() as i32 - self.off as i32;
+            sprites::draw_fish(f, sp.kind, x, pose.y as i32, len, pose.vx < 0.0, pitch,
+                self.t * fish.freq + fish.phase, (bot, self.fog_z(fish.z) * 0.15), true);
         }
     }
 
@@ -838,7 +934,7 @@ impl World {
             if x < -(len as f32) || x > self.w as f32 {
                 continue;
             }
-            let y = jy as f32 + (self.t * 0.7 + j.phase).sin() * 6.0;
+            let y = jy as f32 + (self.t * 0.35 + j.phase).sin() * 6.0;
             sprites::draw_jelly(f, x as i32, y as i32, len, self.t + j.phase, fog);
         }
     }
@@ -849,12 +945,12 @@ impl World {
             return;
         }
         for g in &self.glows {
-            let pulse = ((self.t * 1.3 + g.phase).sin() * 0.5 + 0.5).powi(2);
-            let x = g.x - self.off + (self.t * 0.4 + g.phase).sin() * 4.0;
+            let pulse = ((self.t * 0.65 + g.phase).sin() * 0.5 + 0.5).powi(2);
+            let x = g.x - self.off + (self.t * 0.2 + g.phase).sin() * 4.0;
             if x < -6.0 || x > self.w as f32 + 6.0 {
                 continue;
             }
-            let y = g.y * self.h as f32 + (self.t * 0.3 + g.phase * 2.0).cos() * 3.0;
+            let y = g.y * self.h as f32 + (self.t * 0.15 + g.phase * 2.0).cos() * 3.0;
             let col = self.glow_color(g.hue);
             let k = a * pulse;
             let sc = self.px_scale;
@@ -912,11 +1008,16 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::scenery::hf;
 
     const T: f64 = 1_700_000_123.0;
 
     fn frame_of(w: usize, h: usize, layout: Layout, zone: f32) -> Frame {
-        let world = World::new(w, h, layout, zone, 10, false).at(T);
+        frame_at(w, h, layout, zone, T)
+    }
+
+    fn frame_at(w: usize, h: usize, layout: Layout, zone: f32, t: f64) -> Frame {
+        let world = World::new(w, h, layout, zone, 10, false).at(t);
         let mut f = Frame::new(w, h);
         world.draw(&mut f);
         f
@@ -933,6 +1034,119 @@ mod tests {
             let b = frame_of(160, 90, Layout::single(160), zone);
             assert!(same(&a, &b), "zone {zone}: two instances must draw identical frames");
         }
+    }
+
+    #[test]
+    fn regional_current_moves_fixed_scenery_between_tide_cycles() {
+        let start = 1_700_000_000.0;
+        let region = ocean::region_by_id("gulf-stream").unwrap();
+        let mut a = World::new(300, 180, Layout::single(300), 1.0, 10, false).at(start);
+        let mut b = World::new(300, 180, Layout::single(300), 1.0, 10, false).at(start + tide::PERIOD_SECS);
+        a.set_journey(region, start);
+        b.set_journey(region, start);
+        assert!(b.cam64() > a.cam64() + 100.0);
+        assert_eq!(a.sea().region.id, "gulf-stream");
+    }
+
+    #[test]
+    fn regions_change_water_without_changing_the_game_palette() {
+        let t = 1_700_000_000.0;
+        let mut warm = World::new(160, 90, Layout::single(160), 0.0, 10, false).at(t);
+        let mut cold = World::new(160, 90, Layout::single(160), 0.0, 10, false).at(t);
+        warm.set_journey(ocean::region_by_id("gulf-stream").unwrap(), t);
+        cold.set_journey(ocean::region_by_id("labrador").unwrap(), t);
+        assert_ne!(warm.water(), cold.water());
+    }
+
+    #[test]
+    fn cold_regions_use_silver_schools_in_the_shallows() {
+        let t = 1_700_000_000.0;
+        let mut cold = World::new(160, 90, Layout::single(160), 0.0, 10, false).at(t);
+        cold.set_journey(ocean::region_by_id("labrador").unwrap(), t);
+        assert!(!cold.fishes.is_empty());
+        assert!(cold.fishes.iter().all(|fish| SPECIES[fish.species].id == "silver"));
+    }
+
+    #[test]
+    fn nearest_fish_have_a_lens_close_projection() {
+        assert!(near_fish_scale(0.0) >= 2.0);
+        assert!(near_fish_scale(0.03) >= 4.0);
+        assert!(near_fish_scale(0.1) > 1.4);
+        assert_eq!(near_fish_scale(0.2), 1.0);
+    }
+
+    #[test]
+    fn every_zone_has_a_fish_that_can_pass_close_to_the_lens() {
+        for zone in 0..6 {
+            let world = World::new(640, 340, Layout::single(640), zone as f32, 10, false).at(T);
+            assert!(world.fishes.iter().any(|fish| fish.z < 0.18), "zone {zone} has no close pass");
+        }
+    }
+
+    #[test]
+    fn all_fish_share_the_lens_close_cruise_pace() {
+        for zone in 0..6 {
+            let world = World::new(960, 540, Layout::single(960), zone as f32, 25, false).at(T);
+            let near_speed = world.paths[world.fishes[0].path].speed;
+            for path in &world.paths {
+                assert_eq!(path.speed, near_speed, "zone {zone}: every fish path uses the lens-close cruise pace");
+            }
+        }
+    }
+
+    #[test]
+    fn current_and_particles_stay_within_the_motion_budget() {
+        let unit = 960.0 / 220.0;
+        let t = tide::PERIOD_SECS / 4.0;
+        let a = Tide::at(t, unit);
+        let b = Tide::at(t + 1.0, unit);
+        assert!((b.camera_x - a.camera_x) / unit < 3.0, "tide moves the fixed scene too fast");
+        let region = ocean::region_by_id("gulf-stream").unwrap();
+        let sea_a = SeaState::at(region, 0.0, t, 50, unit);
+        let sea_b = SeaState::at(region, 0.0, t + 1.0, 50, unit);
+        assert!((sea_b.camera_x - sea_a.camera_x) / unit < 5.0, "current moves the fixed scene too fast");
+        let world = World::new(960, 540, Layout::single(960), 1.0, 12, false).at(T);
+        assert!(world.bubbles.iter().all(|b| b.vy / world.unit() <= 6.0));
+        assert!(world.snow.iter().all(|s| s.vy / world.unit() <= 1.0));
+    }
+
+    #[test]
+    fn suspended_particles_do_not_fill_the_water_column() {
+        let world = World::new(960, 540, Layout::single(960), 1.0, 12, false).at(T);
+        assert!(world.bubbles.len() <= 60, "{} bubbles in 960 pixels", world.bubbles.len());
+        assert!(world.snow.len() <= 80, "{} snow particles in 960 pixels", world.snow.len());
+    }
+
+    #[test]
+    fn particles_do_not_jump_when_the_current_changes() {
+        let t = 1_700_000_000.0;
+        let region = ocean::region_by_id("gulf-stream").unwrap();
+        let make_world = |time| {
+            let mut world = World::new(2000, 540, Layout::single(2000), 1.0, 12, false).at(time);
+            world.set_journey(region, t - 300.0);
+            world.bubbles.truncate(1);
+            world.bubbles[0] = Bubble { z: 0.2, x: 1000.0, y0: 50.0, vy: 0.0, phase: 0.0, big: false };
+            world.snow.truncate(1);
+            world.snow[0] = Snow { x: 1000.0, y0: 100.0, vy: 0.0 };
+            world
+        };
+        let first = make_world(t);
+        let later = make_world(t + 1.0);
+        let lit_x = |frame: &Frame| (0..frame.w)
+            .find(|&x| (0..frame.h).any(|y| frame.at(x, y) != [0, 0, 0]))
+            .expect("particle is visible");
+        let mut a = Frame::new(2000, 540);
+        let mut b = Frame::new(2000, 540);
+        first.draw_bubbles(&mut a, false);
+        later.draw_bubbles(&mut b, false);
+        let delta = (lit_x(&b) as i32 - lit_x(&a) as i32 + 1000).rem_euclid(2000) - 1000;
+        assert!(delta.abs() < first.unit() as i32 + 4, "bubble jumped {delta} px");
+        let mut a = Frame::new(2000, 540);
+        let mut b = Frame::new(2000, 540);
+        first.draw_snow(&mut a);
+        later.draw_snow(&mut b);
+        let delta = (lit_x(&b) as i32 - lit_x(&a) as i32 + 1000).rem_euclid(2000) - 1000;
+        assert!(delta.abs() < first.unit() as i32 + 4, "snow jumped {delta} px");
     }
 
     #[test]
@@ -964,6 +1178,236 @@ mod tests {
             // Sprites cut at the seam may differ by a few pixels of edge clamping; the scene must not.
             assert!((diff as f64) / total < 0.01, "zone {zone}: {diff} of {total} pixels differ across the seam");
         }
+    }
+
+    #[test]
+    fn different_width_monitors_share_one_panorama() {
+        let (left_w, right_w, h) = (120, 180, 90);
+        for zone in [0.5, 2.5] {
+            let wide = frame_of(left_w + right_w, h, Layout::single(left_w + right_w), zone);
+            let left = frame_of(left_w, h, Layout { pano_w: left_w + right_w, off: 0 }, zone);
+            let right = frame_of(right_w, h, Layout { pano_w: left_w + right_w, off: left_w }, zone);
+            let mut diff = 0usize;
+            for y in 0..h {
+                for x in 0..left_w {
+                    diff += (left.at(x, y) != wide.at(x, y)) as usize;
+                }
+                for x in 0..right_w {
+                    diff += (right.at(x, y) != wide.at(left_w + x, y)) as usize;
+                }
+            }
+            let total = ((left_w + right_w) * h) as f64;
+            assert!((diff as f64) / total < 0.01, "zone {zone}: {diff} of {total} pixels differ across the seam");
+        }
+    }
+
+    #[test]
+    fn regional_journey_keeps_the_panorama_seam_aligned() {
+        let (left_w, right_w, h) = (120, 180, 90);
+        let t = 1_700_000_500.0;
+        let region = ocean::region_by_id("humboldt").unwrap();
+        let render = |w, off| {
+            let mut world = World::new(w, h, Layout { pano_w: left_w + right_w, off }, 1.0, 10, false).at(t);
+            world.set_journey(region, t - 400.0);
+            let mut frame = Frame::new(w, h);
+            world.draw(&mut frame);
+            frame
+        };
+        let wide = render(left_w + right_w, 0);
+        let left = render(left_w, 0);
+        let right = render(right_w, left_w);
+        let mut diff = 0usize;
+        for y in 0..h {
+            for x in 0..left_w { diff += (left.at(x, y) != wide.at(x, y)) as usize; }
+            for x in 0..right_w { diff += (right.at(x, y) != wide.at(left_w + x, y)) as usize; }
+        }
+        assert!((diff as f64) / (((left_w + right_w) * h) as f64) < 0.01, "{diff} pixels disagree across the seam");
+    }
+
+    #[test]
+    fn far_school_moves_continuously_when_the_tide_changes() {
+        let t = 1_700_000_000.0;
+        let region = ocean::region_by_id("gulf-stream").unwrap();
+        let mut a = World::new(960, 540, Layout::single(960), 1.0, 12, false).at(t);
+        let mut b = World::new(960, 540, Layout::single(960), 1.0, 12, false).at(t + 1.0);
+        a.set_journey(region, t - 300.0);
+        b.set_journey(region, t - 300.0);
+        let period = a.pano as f64 + 60.0 * a.unit() as f64;
+        let delta = (b.far_school_x(0) - a.far_school_x(0)).rem_euclid(period);
+        let distance = delta.min(period - delta);
+        let expected = a.cruise_speed * scenery::FAR_SCHOOL_PROJECTION;
+        assert!((distance - expected).abs() < 0.01,
+            "far school moved {distance} px; expected {expected} px in one second");
+    }
+
+    #[test]
+    fn far_schools_project_the_lens_close_cruise_pace_at_distant_scale() {
+        let t = 1_700_000_000.0;
+        let world = World::new(960, 540, Layout::single(960), 1.0, 12, false).at(t);
+        let later = World::new(960, 540, Layout::single(960), 1.0, 12, false).at(t + 1.0);
+        let period = world.pano as f64 + 60.0 * world.unit() as f64;
+        let near_speed = world.paths[world.fishes[0].path].speed;
+        for school in 0..6 {
+            let dir = if hf(school, 1) < 0.5 { 1.0 } else { -1.0 };
+            let moved = (later.far_school_x(school) - world.far_school_x(school)
+                + period / 2.0).rem_euclid(period) - period / 2.0;
+            assert_eq!(moved.signum(), dir, "school {school} keeps its heading");
+            let expected = near_speed * scenery::FAR_SCHOOL_PROJECTION;
+            assert!((moved.abs() - expected).abs() < 0.01,
+                "school {school} moved {} px; projected cruise pace is {expected} px/s", moved.abs());
+        }
+    }
+
+    #[test]
+    fn regional_current_does_not_change_far_school_cruise_speed() {
+        let t = 1_700_000_000.0;
+        let region = ocean::region_by_id("gulf-stream").unwrap();
+        let mut first = World::new(960, 540, Layout::single(960), 1.0, 12, false).at(t);
+        let mut later = World::new(960, 540, Layout::single(960), 1.0, 12, false).at(t + 30.0);
+        first.set_journey(region, t - 300.0);
+        later.set_journey(region, t - 300.0);
+        let period = first.pano as f64 + 60.0 * first.unit() as f64;
+        let moved = (later.far_school_x(0) - first.far_school_x(0)
+            + period / 2.0).rem_euclid(period) - period / 2.0;
+        let plain_first = World::new(960, 540, Layout::single(960), 1.0, 12, false).at(t);
+        let plain_later = World::new(960, 540, Layout::single(960), 1.0, 12, false).at(t + 30.0);
+        let plain_moved = (plain_later.far_school_x(0) - plain_first.far_school_x(0)
+            + period / 2.0).rem_euclid(period) - period / 2.0;
+        assert!((moved - plain_moved).abs() < 0.01,
+            "regional school moved {moved} px while the same school without current moved {plain_moved} px");
+    }
+
+    #[test]
+    fn seabed_stays_continuous_across_monitors_in_both_tide_directions() {
+        let (left_w, right_w, h) = (120, 180, 90);
+        for t in [tide::PERIOD_SECS / 4.0, tide::PERIOD_SECS * 3.0 / 4.0] {
+            let wide = frame_at(left_w + right_w, h, Layout::single(left_w + right_w), 2.0, t);
+            let left = frame_at(left_w, h, Layout { pano_w: left_w + right_w, off: 0 }, 2.0, t);
+            let right = frame_at(right_w, h, Layout { pano_w: left_w + right_w, off: left_w }, 2.0, t);
+            let mut diff = 0usize;
+            for y in 0..h {
+                for x in 0..left_w { diff += (left.at(x, y) != wide.at(x, y)) as usize; }
+                for x in 0..right_w { diff += (right.at(x, y) != wide.at(left_w + x, y)) as usize; }
+            }
+            assert!((diff as f64) / (((left_w + right_w) * h) as f64) < 0.01, "t={t}: {diff} pixels disagree");
+        }
+    }
+
+    #[test]
+    fn anchored_scenery_matches_the_whole_panorama_at_the_monitor_seam() {
+        let (left_w, right_w, h) = (120, 180, 90);
+        for t in [tide::PERIOD_SECS / 4.0, tide::PERIOD_SECS * 3.0 / 4.0] {
+          // Fractional drawing near x=0 can round one or two pixels differently on adjacent monitors.
+          for layer in [4, 5, 6, 0, 1, 2, 3] {
+            let render = |w, off| {
+                let mut world = World::new(w, h, Layout { pano_w: left_w + right_w, off }, 1.0, 10, false).at(t);
+                world.force_landmark("wreck");
+                let mut frame = Frame::new(w, h);
+                for slot in 0..3 {
+                    if layer == 0 || layer == 3 { world.draw_scenery(&mut frame, slot, [0, 20, 40], &world.floor_row(slot)); }
+                    if layer == 1 || layer == 3 { world.draw_corals(&mut frame, [0, 20, 40], slot); }
+                    if layer == 2 || layer == 3 { world.draw_landmarks(&mut frame, slot, [0, 20, 40]); }
+                    if layer == 4 { world.draw_ground_texture(&mut frame, slot, [0, 20, 40], &world.floor_row(slot)); }
+                    if layer == 5 { world.draw_props(&mut frame, slot, [0, 20, 40]); }
+                    if layer == 6 { world.draw_crabs(&mut frame, slot, [0, 20, 40]); }
+                }
+                frame
+            };
+            let wide = render(left_w + right_w, 0);
+            let left = render(left_w, 0);
+            let right = render(right_w, left_w);
+            let mut seam_differences = 0;
+            for y in 0..h {
+                for x in 0..left_w {
+                    if left.at(x, y) != wide.at(x, y) {
+                        assert!(x + 2 >= left_w, "left mismatch away from seam at ({x}, {y}), t={t}, layer={layer}");
+                        seam_differences += 1;
+                    }
+                }
+                for x in 0..right_w {
+                    if right.at(x, y) != wide.at(left_w + x, y) {
+                        assert!(x < 2, "right mismatch away from seam at ({x}, {y}), t={t}, layer={layer}");
+                        seam_differences += 1;
+                    }
+                }
+            }
+            assert!(seam_differences < 100, "{seam_differences} seam pixels differ, t={t}, layer={layer}");
+          }
+        }
+    }
+
+    #[test]
+    fn simulated_water_temperature_falls_with_depth() {
+        assert_eq!(temperature_c(0), 24.0);
+        assert_eq!(temperature_c(200), 17.0);
+        assert_eq!(temperature_c(1000), 8.0);
+        assert_eq!(temperature_c(6000), 2.0);
+        assert_eq!(temperature_c(11000), 2.0);
+    }
+
+    #[test]
+    fn tide_reverses_smoothly_and_retraces_the_same_position() {
+        use tide::{PERIOD_SECS, Tide};
+        let unit = 2.0;
+        let slack = Tide::at(0.0, unit);
+        let east = Tide::at(PERIOD_SECS / 4.0, unit);
+        let turning = Tide::at(PERIOD_SECS / 2.0, unit);
+        let west = Tide::at(PERIOD_SECS * 3.0 / 4.0, unit);
+        let again = Tide::at(PERIOD_SECS, unit);
+        assert_eq!(slack.direction, Direction::Still);
+        assert_eq!(east.direction, Direction::East);
+        assert!((east.speed_knots - 1.5).abs() < 1e-6);
+        assert_eq!(turning.direction, Direction::Still);
+        assert_eq!(west.direction, Direction::West);
+        assert!((west.speed_knots - 1.5).abs() < 1e-6);
+        assert!((again.camera_x - slack.camera_x).abs() < 1e-5);
+        let before = Tide::at(PERIOD_SECS / 2.0 - 1.0, unit);
+        let after = Tide::at(PERIOD_SECS / 2.0 + 1.0, unit);
+        assert!((before.camera_x - after.camera_x).abs() < 0.01);
+        assert!(before.camera_x < turning.camera_x && after.camera_x < turning.camera_x);
+    }
+
+    #[test]
+    fn a_fixed_landmark_stays_behind_and_returns_with_the_tide() {
+        let layout = Layout::single(300);
+        let mut outbound = World::new(300, 180, layout, 2.0, 10, false).at(tide::PERIOD_SECS / 4.0);
+        outbound.force_landmark("wreck");
+        let mut ahead = World::new(300, 180, layout, 2.0, 10, false).at(tide::PERIOD_SECS / 4.0 + 200.0);
+        ahead.force_landmark("wreck");
+        let start = outbound.landmark_spots(1);
+        let later = ahead.landmark_spots(1);
+        let &(kind, x, seed) = start.iter().find(|(_, _, seed)| later.iter().any(|(_, _, other)| seed == other)).expect("a shared seeded landmark in reach");
+        let ahead_x = later.iter().find(|(_, _, other)| *other == seed).unwrap().1;
+        assert!(ahead_x < x, "landmark moves behind the camera on the outbound tide");
+
+        let mut returning = World::new(300, 180, layout, 2.0, 10, false).at(tide::PERIOD_SECS * 3.0 / 4.0);
+        returning.force_landmark("wreck");
+        assert!(returning.landmark_spots(1).iter().any(|&(other_kind, other_x, other_seed)| {
+            other_kind == kind && other_seed == seed && (other_x - x).abs() < 0.01
+        }));
+    }
+
+    #[test]
+    fn a_fish_crosses_from_one_monitor_to_the_next() {
+        let (left_w, right_w, h) = (548, 730, 268);
+        let layout = Layout { pano_w: left_w + right_w, off: 0 };
+        let world = World::new(left_w, h, layout, 1.0, 10, false).at(T);
+        let crossing = (0..1800).find_map(|second| {
+            let t = T + second as f64;
+            world.fishes.iter().enumerate().find_map(|(index, fish)| {
+                let before = world.screen_x(world.fish_xy(fish, t).0);
+                let after = world.screen_x(world.fish_xy(fish, t + 1.0).0);
+                (before < left_w as f32 && after >= left_w as f32 && after < (left_w + right_w) as f32)
+                    .then_some((index, t))
+            })
+        }).expect("a fish should swim through the shared monitor boundary");
+        let (index, t) = crossing;
+        let left_before = World::new(left_w, h, layout, 1.0, 10, false).at(t);
+        let right_after = World::new(right_w, h, Layout { pano_w: left_w + right_w, off: left_w }, 1.0, 10, false).at(t + 1.0);
+        let before = left_before.fish_pose(&left_before.fishes[index]);
+        let after = right_after.fish_pose(&right_after.fishes[index]);
+        assert!((0.0..left_w as f32).contains(&before.x));
+        assert!((0.0..right_w as f32).contains(&after.x));
     }
 
     #[test]
@@ -1154,6 +1598,14 @@ mod tests {
         w.draw(&mut f);
         assert!(!same(&plain, &f), "halloween adds jellies and orange plankton even in the shallows");
         assert_eq!(w.jelly_count(), 5);
+
+        let mut oceans = World::new(160, 90, Layout::single(160), 1.0, 10, false).at(T);
+        let plain_whale = oceans.whale_state(T);
+        oceans.set_season(Some("oceans"));
+        assert_eq!(plain_whale, oceans.whale_state(T), "season does not change encounter odds");
+        let mut ocean_frame = Frame::new(160, 90);
+        oceans.draw(&mut ocean_frame);
+        assert!(!same(&plain, &ocean_frame), "Oceans Week changes the glow visually");
     }
 }
 
@@ -1166,7 +1618,7 @@ mod bench {
     #[test]
     #[ignore]
     fn bench_frame() {
-        let (cols, rows) = (320usize, 85usize);
+        let (cols, rows) = if std::env::var_os("ABYSS_BENCH_NATIVE").is_some() { (1280usize, 270usize) } else { (320usize, 85usize) };
         let (w, h) = (cols * 2, rows * 4);
         let mut world = World::new(w, h, Layout::single(w), 2.5, 20, false).at(1_700_000_000.0);
         let mut f = Frame::new(w, h);
@@ -1201,6 +1653,7 @@ mod bench {
         t!("shadows", for s in 0..5 { world.draw_shadows(&mut f, bot, s) });
         t!("jellies", for s in 0..5 { world.draw_jellies(&mut f, bot, s) });
         t!("fish", for s in 0..5 { world.draw_fish(&mut f, bot, s) });
+        t!("near_fish", world.draw_near_fish(&mut f, bot));
         t!("bloom", world.draw_bloom(&mut f));
         t!("foreground", world.draw_foreground(&mut f, bot));
         println!("{w}x{h}: draw {:.2} ms, present {:.2} ms per frame", td / n as f64 * 1e3, tp / n as f64 * 1e3);

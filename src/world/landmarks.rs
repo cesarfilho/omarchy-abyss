@@ -62,22 +62,25 @@ fn kind_at(zone: usize, r: f32) -> Option<usize> {
 
 impl World {
     /// Landmarks of one far plane: (kind index, screen x of the centre, seed).
-    fn landmark_spots(&self, slot: usize) -> Vec<(usize, f32, u64)> {
+    pub(super) fn landmark_spots(&self, slot: usize) -> Vec<(usize, f32, u64)> {
         if slot != 1 && slot != 2 {
             return Vec::new();
         }
         let unit = self.unit() as f64;
-        let period = self.pano as f64 * 1.8 + 420.0 * unit;
+        let spacing = 250.0 * unit;
         let speed = PLANES[slot].4 as f64;
+        let reach = 300.0 * unit;
+        let left = (self.cam64() * speed - reach) / spacing;
+        let right = (self.cam64() * speed + self.pano as f64 + reach) / spacing;
         let mut out = Vec::new();
-        for i in 0..2u64 {
-            let seed = 90_000 + slot as u64 * 100 + i;
+        for i in left.floor() as i64..=right.ceil() as i64 {
+            let seed = mix(90_000 + slot as u64, i as u64);
             if self.force_landmark.is_none() && hf(seed, 1) > 0.7 {
                 continue;
             }
             let Some(kind) = self.force_landmark.or_else(|| kind_at(self.tz, hf(seed, 2))) else { continue };
-            let wx = (i as f64 + 0.15 + 0.7 * hf(seed, 3) as f64) * period / 2.0;
-            let sx = ((wx - self.cam64() * speed).rem_euclid(period) - 210.0 * unit - self.off as f64) as f32;
+            let wx = (i as f64 + 0.15 + 0.7 * hf(seed, 3) as f64) * spacing;
+            let sx = (wx - self.cam64() * speed - self.off as f64) as f32;
             out.push((kind, sx, seed));
         }
         out
@@ -109,8 +112,8 @@ impl World {
                 continue;
             }
             let u = base_u * KINDS[kind].2;
-            let base = self.floor_y(slot, sx.clamp(0.0, self.w as f32 - 1.0)) + 2.0;
-            let s = Spot { x: sx, base, u, sc, fog: self.fog_z(z) * 0.6, bot, t: self.t };
+            let base = self.floor_y(slot, sx) + 2.0;
+            let s = Spot { x: sx, base, u, sc, fog: self.fog_z(z) * 0.6, bot, t: self.t * 0.5 };
             let dir = if hf(seed, 4) < 0.5 { 1.0 } else { -1.0 };
             match KINDS[kind].0 {
                 "wreck" => self.lm_wreck(f, &s, dir),

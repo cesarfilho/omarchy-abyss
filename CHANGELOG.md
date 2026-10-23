@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Regiões oceânicas com correntes, marés, clima e condições do mar exibidas no HUD, com efeitos visuais e movimento do panorama.
+- Progressão revisada para tempo ativo, missões diárias de duração e paletas cosméticas compradas com pontos.
+- Painel do Omarchy reorganizado em cinco abas, com navegação por teclado para bestiário e troféus.
+- Instalação e remoção respeitam diretórios XDG e permitem escolher o diretório dos executáveis.
+
 ## 0.4.1
 
 - Security: `scripts/e2e-idle.sh` now stores its diagnostic screenshot in an owner-only temporary directory with private file permissions and removes it on exit.

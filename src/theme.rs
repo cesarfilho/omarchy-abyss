@@ -28,6 +28,15 @@ impl Palette {
         }
     }
 
+    pub fn cosmetic(base: Self, id: &str) -> Self {
+        match id {
+            "sunset" => Self { water: Some(([224, 115, 70], [52, 28, 70])), glow: ([255, 175, 95], [240, 100, 105]), text: base.text, dim: base.dim, gold: [255, 205, 115], cyan: [255, 170, 130] },
+            "abyssal" => Self { water: Some(([50, 85, 150], [10, 15, 38])), glow: ([100, 180, 255], [160, 125, 255]), text: base.text, dim: base.dim, gold: base.gold, cyan: [150, 205, 255] },
+            "arctic" => Self { water: Some(([90, 190, 205], [15, 45, 75])), glow: ([150, 255, 235], [110, 200, 255]), text: base.text, dim: base.dim, gold: [255, 230, 165], cyan: [190, 255, 250] },
+            _ => base,
+        }
+    }
+
     /// Builds a palette from theme colours (`name -> #rrggbb`). Missing keys fall back to classic.
     pub fn from_colors(c: &HashMap<String, Rgb>) -> Self {
         let base = Self::classic();

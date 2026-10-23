@@ -5,9 +5,8 @@ pub const ZONE_NAMES: [&str; 6] =
     ["Superfície", "Zona de Luz", "Crepúsculo", "Meia-noite", "Abissal", "Hadal"];
 const ZONE_START_M: [f64; 6] = [0.0, 50.0, 200.0, 1000.0, 4000.0, 6000.0];
 const ZONE_END_M: [f64; 6] = [50.0, 200.0, 1000.0, 4000.0, 6000.0, 11000.0];
-const ZONE_MULT: [f64; 6] = [1.0, 1.2, 1.5, 1.8, 2.2, 2.6];
 const LEVELS_PER_ZONE: f64 = 3.0;
-const XP_PER_SEC: f64 = 0.2;
+const XP_PER_SEC: f64 = 0.1;
 const REEF_SECS: f64 = 900.0;
 pub const REEF_MAX: u32 = 30;
 pub const WILT_GRACE_DAYS: i64 = 3;
@@ -23,6 +22,8 @@ pub struct TrophyRec {
 pub struct Save {
     pub xp: f64,
     pub points: u64,
+    /// Fractional active minutes carried between ticks so point earnings don't depend on tick size.
+    pub point_secs: f64,
     pub total_secs: f64,
     pub sessions: u32,
     pub best_session_secs: f64,
@@ -45,14 +46,35 @@ pub struct Save {
     pub qd_whales: u32,
     pub qd_discoveries: u32,
     pub qd_levels: u32,
+    pub qd_time_secs: f64,
     pub quests_total: u32,
     pub season_secs: Vec<SeasonRec>,
+    #[serde(default = "default_cosmetics")]
+    pub cosmetics: Vec<String>,
+#[serde(default = "default_theme")]
+    pub selected_cosmetic: String,
     /// Not persisted: set by the app when seasonal events are turned off in the config.
     #[serde(skip)]
     pub no_seasons: bool,
 }
 
-pub const SCHEMA: u32 = 2;
+pub const SCHEMA: u32 = 3;
+
+pub struct Cosmetic {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub cost: u64,
+}
+
+pub const COSMETICS: &[Cosmetic] = &[
+    Cosmetic { id: "theme", name: "Tema do Omarchy", cost: 0 },
+    Cosmetic { id: "sunset", name: "Pôr do Sol", cost: 300 },
+    Cosmetic { id: "abyssal", name: "Fossa", cost: 900 },
+    Cosmetic { id: "arctic", name: "Mar Polar", cost: 1800 },
+];
+
+fn default_cosmetics() -> Vec<String> { vec!["theme".into()] }
+fn default_theme() -> String { "theme".into() }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SeasonRec {
@@ -101,12 +123,10 @@ pub struct Quest {
 }
 
 pub const QUESTS: &[Quest] = &[
-    Quest { id: "time10", name: "Mergulho curto", desc: "10 minutos no mar hoje" },
+    Quest { id: "time15", name: "Mergulho diário", desc: "15 minutos no mar hoje" },
     Quest { id: "time30", name: "Mergulho longo", desc: "30 minutos no mar hoje" },
-    Quest { id: "whale", name: "Caça-baleias", desc: "Veja uma baleia hoje" },
-    Quest { id: "discover", name: "Naturalista", desc: "Descubra uma criatura nova hoje" },
-    Quest { id: "level", name: "Rumo ao fundo", desc: "Suba um nível hoje" },
-    Quest { id: "calm", name: "Calmaria", desc: "15 minutos numa só sessão" },
+    Quest { id: "time60", name: "Exploração", desc: "1 hora no mar hoje" },
+    Quest { id: "time90", name: "Expedição", desc: "1 hora e meia no mar hoje" },
 ];
 
 pub const QUEST_POINTS: u64 = 60;
@@ -128,10 +148,9 @@ pub struct Season {
 pub const SEASONS: &[Season] = &[
     Season { id: "halloween", name: "Noite das Águas-vivas", desc: "Águas-vivas e plâncton laranja em todas as zonas", from: (10, 24), to: (11, 2) },
     Season { id: "xmas", name: "Luzes do Natal", desc: "O plâncton acende em vermelho, verde e dourado", from: (12, 20), to: (1, 2) },
-    Season { id: "oceans", name: "Semana do Oceano", desc: "Baleias aparecem com mais frequência", from: (6, 5), to: (6, 12) },
+    Season { id: "oceans", name: "Semana do Oceano", desc: "Brilho azul e plâncton luminoso", from: (6, 5), to: (6, 12) },
 ];
 
-pub const SEASON_XP_BOOST: f64 = 1.5;
 const SEASON_TROPHY_SECS: f64 = 300.0;
 
 pub fn season_info(id: &str) -> Option<&'static Season> {
@@ -260,20 +279,11 @@ impl Save {
     }
 
     pub fn xp_rate(&self) -> f64 {
-        let mult: f64 = std::env::var("ABYSS_XP_MULT").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
-        XP_PER_SEC * ZONE_MULT[self.zone()] * (1.0 + 0.1 * self.streak.min(10) as f64) * mult
+        XP_PER_SEC
     }
 
     pub fn season_time(&self, id: &str) -> f64 {
         self.season_secs.iter().find(|r| r.id == id).map(|r| r.secs).unwrap_or(0.0)
-    }
-
-    fn season_boost(&self, today: i64) -> f64 {
-        if !self.no_seasons && season_at(today).is_some() { SEASON_XP_BOOST } else { 1.0 }
-    }
-
-    pub fn today_secs(&self) -> f64 {
-        self.daily.last().filter(|d| d.day == self.last_day).map(|d| d.secs).unwrap_or(0.0)
     }
 
     pub fn has(&self, id: &str) -> bool {
@@ -308,14 +318,8 @@ impl Save {
         self.qd_whales = 0;
         self.qd_discoveries = 0;
         self.qd_levels = 0;
-        let mut pool: Vec<&Quest> = QUESTS
-            .iter()
-            .filter(|q| match q.id {
-                "whale" => self.zone() < 4,
-                "discover" => self.bestiary.len() < BESTIARY.len(),
-                _ => true,
-            })
-            .collect();
+        self.qd_time_secs = 0.0;
+        let mut pool: Vec<&Quest> = QUESTS.iter().collect();
         pool.sort_by_key(|q| {
             let h = q.id.bytes().fold(today as u64 ^ 0x9E37_79B9_7F4A_7C15, |a, b| (a ^ b as u64).wrapping_mul(0x0100_0000_01B3));
             h ^ (h >> 29)
@@ -323,14 +327,12 @@ impl Save {
         self.quests = pool.iter().take(3).map(|q| q.id.to_string()).collect();
     }
 
-    pub fn quest_progress(&self, id: &str, sess: &Session) -> f64 {
+    pub fn quest_progress(&self, id: &str, _sess: &Session) -> f64 {
         let p = match id {
-            "time10" => self.today_secs() / 600.0,
-            "time30" => self.today_secs() / 1800.0,
-            "whale" => self.qd_whales as f64,
-            "discover" => self.qd_discoveries as f64,
-            "level" => self.qd_levels as f64,
-            "calm" => sess.secs / 900.0,
+            "time15" => self.qd_time_secs / 900.0,
+            "time30" => self.qd_time_secs / 1800.0,
+            "time60" => self.qd_time_secs / 3600.0,
+            "time90" => self.qd_time_secs / 5400.0,
             _ => 0.0,
         };
         p.clamp(0.0, 1.0)
@@ -372,9 +374,12 @@ impl Save {
         let mut events = Vec::new();
         let level_before = self.level();
         self.roll_quests(today);
-        let gain = self.xp_rate() * self.season_boost(today) * dt;
+        let gain = self.xp_rate() * dt;
         self.xp += gain;
-        self.points += gain.round() as u64;
+        self.point_secs += dt;
+        let minute_points = (self.point_secs / 60.0).floor() as u64;
+        self.points += minute_points;
+        self.point_secs -= minute_points as f64 * 60.0;
         sess.xp_gain += gain;
         self.total_secs += dt;
         sess.secs += dt;
@@ -391,6 +396,7 @@ impl Save {
                 self.daily.drain(..excess);
             }
         }
+        self.qd_time_secs += dt;
         self.reef_secs += dt;
         if self.reef_secs >= REEF_SECS {
             self.reef_secs -= REEF_SECS;
@@ -420,7 +426,6 @@ impl Save {
     pub fn on_whale(&mut self, sess: &mut Session, today: i64) -> Vec<GameEvent> {
         self.whales += 1;
         sess.whales += 1;
-        self.points += 50;
         self.qd_whales += 1;
         let mut events = self.check_quests(sess);
         events.extend(self.check_trophies(sess, today));
@@ -448,6 +453,21 @@ impl Save {
         sess.streak = self.streak;
         sess.trophies_total = self.trophies.len();
         sess.bestiary_total = self.bestiary.len();
+    }
+
+    pub fn buy_cosmetic(&mut self, id: &str) -> bool {
+        let Some(c) = COSMETICS.iter().find(|c| c.id == id) else { return false };
+        if self.cosmetics.iter().any(|owned| owned == id) || self.points < c.cost { return false; }
+        self.points -= c.cost;
+        self.cosmetics.push(id.to_string());
+        true
+    }
+
+    pub fn select_cosmetic(&mut self, id: &str) -> bool {
+        if self.cosmetics.iter().any(|owned| owned == id) {
+            self.selected_cosmetic = id.to_string();
+            true
+        } else { false }
     }
 }
 
@@ -485,9 +505,15 @@ impl Save {
             }))
             .collect();
         let season = if self.no_seasons { None } else { season_at(self.last_day) };
+        let cosmetics: Vec<_> = COSMETICS.iter().map(|c| serde_json::json!({
+            "id": c.id, "name": c.name, "cost": c.cost,
+            "unlocked": self.cosmetics.iter().any(|id| id == c.id),
+            "selected": self.selected_cosmetic == c.id,
+        })).collect();
         serde_json::json!({
             "schema": SCHEMA, "bestiary": bestiary, "quests": quests, "questsTotal": self.quests_total,
-            "season": season.map(|x| serde_json::json!({ "id": x.id, "name": x.name, "desc": x.desc, "boost": SEASON_XP_BOOST })),
+            "cosmetics": cosmetics, "selectedCosmetic": self.selected_cosmetic,
+            "dailyQuestSecs": self.qd_time_secs, "season": season.map(|x| serde_json::json!({ "id": x.id, "name": x.name, "desc": x.desc })),
             "level": l, "zone": self.zone(), "zoneF": self.zone_f(), "zoneName": ZONE_NAMES[self.zone()],
             "depth": self.depth_m(), "xp": self.xp, "xpLevelStart": xp_at(l), "xpNext": xp_at(l + 1),
             "progress": self.progress(), "points": self.points, "streak": self.streak,
@@ -556,6 +582,15 @@ impl Save {
                     self.bestiary.push(c.id.to_string());
                 }
             }
+        }
+        if !self.cosmetics.iter().any(|id| id == "theme") { self.cosmetics.push("theme".into()); }
+        if !self.cosmetics.iter().any(|id| id == &self.selected_cosmetic) { self.selected_cosmetic = "theme".into(); }
+        if self.quests.iter().any(|id| quest(id).is_none()) {
+            self.quests.clear();
+            self.roll_quests(self.quest_day);
+        }
+        if self.quest_day != 0 && self.qd_time_secs == 0.0 {
+            self.qd_time_secs = self.daily.last().filter(|d| d.day == self.quest_day).map(|d| d.secs).unwrap_or(0.0);
         }
         self.schema = SCHEMA;
     }
@@ -647,6 +682,84 @@ mod tests {
     }
 
     #[test]
+    fn xp_rate_is_fixed_across_zone_streak_and_season() {
+        let day = days_from_civil(2026, 10, 31);
+        for save in [
+            Save::default(),
+            Save { xp: xp_at(15), streak: 10, ..Default::default() },
+            Save { no_seasons: true, xp: xp_at(9), streak: 0, ..Default::default() },
+        ] {
+            assert!((save.xp_rate() - 0.1).abs() < f64::EPSILON);
+            let mut s = save;
+            let mut session = Session::default();
+            s.tick(10.0, &mut session, false, day);
+            assert!((session.xp_gain - 1.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn active_time_awards_one_point_per_minute_without_fractional_rounding() {
+        let mut s = Save::default();
+        let mut session = Session::default();
+        s.tick(30.0, &mut session, false, 1);
+        assert_eq!(s.points, 0);
+        s.tick(31.0, &mut session, false, 1);
+        assert_eq!(s.points, 1);
+        s.quests.clear();
+        s.tick(29.0, &mut session, false, 1);
+        assert_eq!(s.points, 1);
+    }
+
+    #[test]
+    fn cosmetics_require_points_and_selection_is_persisted() {
+        let mut s = Save { points: 1799, ..Default::default() };
+        assert!(!s.buy_cosmetic("arctic"));
+        assert!(s.buy_cosmetic("sunset"));
+        assert_eq!(s.points, 1499);
+        assert!(!s.select_cosmetic("arctic"));
+        assert!(s.buy_cosmetic("abyssal"));
+        assert_eq!(s.points, 599);
+        assert!(s.select_cosmetic("abyssal"));
+        let json = serde_json::to_string(&s).unwrap();
+        let loaded: Save = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.cosmetics, vec!["sunset", "abyssal"]);
+        assert_eq!(loaded.selected_cosmetic, "abyssal");
+        assert_eq!(loaded.stats_json(None)["selectedCosmetic"], "abyssal");
+        assert_eq!(loaded.stats_json(None)["points"], 599);
+        assert!(loaded.stats_json(None)["cosmetics"].as_array().unwrap().iter().any(|item| item["id"] == "abyssal" && item["unlocked"] == true));
+    }
+
+    #[test]
+    fn whale_sightings_no_longer_award_random_points() {
+        let mut s = Save { whales: 1, trophies: vec![TrophyRec { id: "whale_1".into(), day: 0 }], ..Default::default() };
+        s.on_whale(&mut Session::default(), 1);
+        assert_eq!(s.points, 0);
+    }
+
+    #[test]
+    fn daily_fifteen_minute_mission_uses_persistent_daily_time() {
+        assert!(QUESTS.iter().any(|q| q.id == "time15"));
+        let mut s = Save::default();
+        s.begin_session(44);
+        s.quests = vec!["time15".into()];
+        let mut session = Session::default();
+        s.tick(450.0, &mut session, false, 44);
+        assert!((s.quest_progress("time15", &session) - 0.5).abs() < 1e-9);
+        s.tick(450.0, &mut session, false, 44);
+        assert_eq!(s.quest_progress("time15", &session), 1.0);
+        assert!(s.quest_done.contains(&"time15".to_string()));
+
+        let mut across_midnight = Save::default();
+        across_midnight.begin_session(44);
+        across_midnight.roll_quests(45);
+        across_midnight.quests = vec!["time15".into()];
+        across_midnight.tick(899.0, &mut Session::default(), false, 45);
+        assert!((across_midnight.quest_progress("time15", &Session::default()) - 899.0 / 900.0).abs() < 1e-9);
+        across_midnight.tick(1.0, &mut Session::default(), false, 45);
+        assert!(across_midnight.quest_done.contains(&"time15".to_string()));
+    }
+
+    #[test]
     fn zones_follow_levels() {
         let mut s = Save::default();
         s.xp = xp_at(3);
@@ -708,7 +821,7 @@ mod tests {
         }
         assert!(ups >= 1);
         assert_eq!(s.reef, 1, "1000s crosses one 900s reef step");
-        assert!(sess.xp_gain > 150.0);
+        assert!(sess.xp_gain > 99.0);
     }
 
     #[test]
@@ -732,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn season_boosts_xp_and_unlocks_its_trophy() {
+    fn seasonal_events_do_not_change_xp_and_keep_their_trophy() {
         let day = days_from_civil(2026, 10, 31);
         let (mut a, mut b) = (Save::default(), Save { no_seasons: true, ..Default::default() });
         let (mut sa, mut sb) = (Session::default(), Session::default());
@@ -741,7 +854,7 @@ mod tests {
             events.extend(a.tick(1.0, &mut sa, false, day));
             b.tick(1.0, &mut sb, false, day);
         }
-        assert!((a.xp / b.xp - SEASON_XP_BOOST).abs() < 1e-6);
+        assert!((a.xp - b.xp).abs() < 1e-6);
         assert!(events.contains(&GameEvent::Trophy("season_halloween")));
         assert!(!b.has("season_halloween"), "seasons can be turned off");
     }
@@ -782,36 +895,30 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), 3);
 
-        s.quests = vec!["time10".into(), "whale".into(), "level".into()];
+        s.quests = vec!["time15".into(), "time30".into(), "time60".into()];
         let mut sess = Session::default();
         let mut events = Vec::new();
-        for _ in 0..600 {
+        for _ in 0..3600 {
             events.extend(s.tick(1.0, &mut sess, false, 500));
         }
-        assert!(events.contains(&GameEvent::Quest("time10")));
-        events = s.on_whale(&mut sess, 500);
-        assert!(events.contains(&GameEvent::Quest("whale")));
-        assert!(s.quest_done.contains(&"whale".to_string()));
+        assert!(events.contains(&GameEvent::Quest("time15")));
+        assert!(events.contains(&GameEvent::Quest("time30")));
+        assert!(s.quest_done.contains(&"time60".to_string()));
         assert_eq!(s.quests_total as usize, s.quest_done.len());
         assert!(s.points >= 2 * QUEST_POINTS);
     }
 
     #[test]
-    fn quests_reset_on_a_new_day_and_skip_impossible_ones() {
-        let mut s = Save { xp: xp_at(13), ..Default::default() }; // zone 4: no whales
+    fn quests_reset_on_a_new_day_and_are_not_encounter_dependent() {
+        let mut s = Save { xp: xp_at(13), ..Default::default() };
         for day in 0..40 {
             s.roll_quests(1000 + day);
-            assert!(!s.quests.contains(&"whale".to_string()), "no whale quest below zone 4");
+            assert!(s.quests.iter().all(|id| ["time15", "time30", "time60", "time90"].contains(&id.as_str())));
         }
         s.quest_done.push("x".into());
         s.qd_whales = 3;
         s.roll_quests(2000);
         assert!(s.quest_done.is_empty() && s.qd_whales == 0);
-        s.bestiary = BESTIARY.iter().map(|c| c.id.to_string()).collect();
-        for day in 0..40 {
-            s.roll_quests(3000 + day);
-            assert!(!s.quests.contains(&"discover".to_string()), "nothing left to discover");
-        }
     }
 
     #[test]
@@ -825,6 +932,9 @@ mod tests {
         let s = Save::load_from(&path);
         assert_eq!(s.schema, SCHEMA);
         assert_eq!((s.points, s.reef, s.whales), (321, 7, 2));
+        assert_eq!(s.cosmetics, vec!["theme"]);
+        assert_eq!(s.selected_cosmetic, "theme");
+        assert!(COSMETICS.iter().skip(1).all(|c| !s.cosmetics.iter().any(|id| id == c.id)));
         assert!(s.has("first_dive"));
         let zone = s.zone();
         for c in BESTIARY.iter().filter(|c| c.zones.0 <= zone && c.id != "bloom") {

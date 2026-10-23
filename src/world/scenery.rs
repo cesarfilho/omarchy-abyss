@@ -4,6 +4,9 @@
 
 use super::*;
 
+/// Screen-space scale for tiny fish at the far edge of visibility.
+pub(super) const FAR_SCHOOL_PROJECTION: f64 = 0.1;
+
 pub(super) fn shade(c: Rgb, k: f32) -> Rgb {
     c.map(|v| (v as f32 * k).clamp(0.0, 255.0) as u8)
 }
@@ -131,7 +134,58 @@ impl World {
     pub(super) fn draw_scenery(&self, f: &mut Frame, slot: usize, bot: Rgb, floor: &[f32]) {
         self.draw_ground_texture(f, slot, bot, floor);
         self.draw_props(f, slot, bot);
+        self.draw_lost_nets(f, slot, bot);
         self.draw_crabs(f, slot, bot);
+    }
+
+    /// Torn fishing nets caught on the seabed. Their sparse, seeded placement is shared by all
+    /// monitors and fades out in the deep zones where old fishing gear is less plausible.
+    fn draw_lost_nets(&self, f: &mut Frame, slot: usize, bot: Rgb) {
+        if slot > 2 || self.tz > 3 {
+            return;
+        }
+        let unit = self.unit() as f64;
+        let spacing = 300.0 * unit;
+        let speed = PLANES[slot].4 as f64;
+        let z = slot as f32 / 4.0;
+        let sc = ((self.px_scale as f32 * scale_z(z)).round() as i32).max(1);
+        let u = self.unit() * scale_z(z);
+        let fog = self.fog_z(z);
+        for i in self.visible_cells(spacing, speed, 50.0 * unit) {
+            let seed = mix(84_000 + slot as u64, i as u64);
+            if hf(seed, 1) > 0.36 {
+                continue;
+            }
+            let wx = (i as f64 + 0.15 + hf(seed, 2) as f64 * 0.7) * spacing;
+            let sx = ((wx - self.cam64() * speed).round() as i32 - self.off as i32) as f32;
+            if sx < -50.0 * u || sx > self.w as f32 + 50.0 * u {
+                continue;
+            }
+            let base = self.floor_y(slot, sx);
+            let net = lerp([92, 116, 104], bot, fog + 0.12);
+            let rope = lerp([70, 78, 66], bot, fog);
+            let width = (18.0 + 8.0 * hf(seed, 3)) * u;
+            let height = (7.0 + 4.0 * hf(seed, 4)) * u;
+            // A sagging net with a few broken, trailing strands.
+            for k in 0..=8 {
+                let x = sx - width + 2.0 * width * k as f32 / 8.0;
+                let y = base - height * (1.0 - (2.0 * k as f32 / 8.0 - 1.0).abs()) * 0.5;
+                thick(f, (x, base), (x, y - height * 0.45), sc, net);
+            }
+            for k in 0..=4 {
+                let x = sx - width + 2.0 * width * k as f32 / 4.0;
+                let y = base - height * (1.0 - (2.0 * k as f32 / 4.0 - 1.0).abs()) * 0.5;
+                thick(f, (sx - width, base - height * 0.45), (x, y), sc, net);
+                thick(f, (sx + width, base - height * 0.45), (x, y), sc, net);
+            }
+            thick(f, (sx - width * 1.1, base), (sx + width * 1.1, base), sc + 1, rope);
+            thick(f, (sx - width, base - height * 0.45), (sx + width, base - height * 0.45), sc, rope);
+            // Floats and a snagged fragment of rope make the net readable at a glance.
+            for side in [-1.0f32, 1.0] {
+                disc(f, sx + side * width, base - height * 0.5, 1.5 * u, 1.1 * u, lerp([196, 154, 72], bot, fog));
+            }
+            thick(f, (sx + width * 0.7, base - height * 0.45), (sx + width * 1.25, base - height * 1.4), sc, rope);
+        }
     }
 
     /// Floor height of a plane for every screen column (computed once per plane and frame).
@@ -153,23 +207,22 @@ impl World {
         let cs = scale_z(z);
         let unit = self.unit() as f64;
         let u = self.unit() * cs;
-        let period = self.pano as f64 + 90.0 * unit;
-        let n = ((period / (24.0 * unit)).round() as usize).max(6);
+        let spacing = 24.0 * unit;
         let speed = PLANES[slot].4 as f64;
         let sc = ((self.px_scale as f32 * cs).round() as i32).max(1);
         let fog = self.fog_z(z);
-        for i in 0..n {
-            let seed = slot as u64 * 1000 + i as u64;
+        for i in self.visible_cells(spacing, speed, 60.0 * unit) {
+            let seed = mix(1_000 + slot as u64, i as u64);
             if hf(seed, 1) < 0.12 {
                 continue;
             }
-            let wx = (i as f64 + hf(seed, 2) as f64 * 0.8) * period / n as f64;
-            let sx = ((wx - self.cam64() * speed).rem_euclid(period) - 45.0 * unit - self.off as f64) as f32;
+            let wx = (i as f64 + hf(seed, 2) as f64 * 0.8) * spacing;
+            let sx = ((wx - self.cam64() * speed).round() as i32 - self.off as i32) as f32;
             if sx < -60.0 * unit as f32 || sx > self.w as f32 + 60.0 * unit as f32 {
                 continue;
             }
-            let base = self.floor_y(slot, sx.clamp(0.0, self.w as f32 - 1.0)) + 1.0;
-            let sp = Spot { x: sx, base, u, sc, fog, bot, t: self.t };
+            let base = self.floor_y(slot, sx) + 1.0;
+            let sp = Spot { x: sx, base, u, sc, fog, bot, t: self.t * 0.5 };
             let (a, b, c) = (hf(seed, 3), hf(seed, 4), hf(seed, 5));
             match pick(self.tz, slot <= 2, hf(seed, 6)) {
                 0 => self.prop_rock(f, &sp, a, b),
@@ -366,22 +419,25 @@ impl World {
         let cs = scale_z(z);
         let unit = self.unit() as f64;
         let u = self.unit() * cs;
-        let period = self.pano as f64 + 90.0 * unit;
+        let spacing = 300.0 * unit;
         let speed = PLANES[slot].4 as f64;
         let sc = ((self.px_scale as f32 * cs).round() as i32).max(1);
-        for i in 0..2u64 {
-            let seed = 70_000 + slot as u64 * 10 + i;
-            let wx = (i as f64 * 0.5 + 0.1 + 0.4 * hf(seed, 1) as f64) * period;
+        for i in self.visible_cells(spacing, speed, 60.0 * unit) {
+            let seed = mix(70_000 + slot as u64, i as u64);
+            if hf(seed, 1) > 0.45 {
+                continue;
+            }
+            let wx = (i as f64 + 0.1 + 0.8 * hf(seed, 2) as f64) * spacing;
             // Walks back and forth over a stretch of sand, pausing at each end.
-            let phase = self.tt * 0.09 + hf(seed, 2) as f64 * std::f64::consts::TAU;
+            let phase = self.tt * 0.09 + hf(seed, 3) as f64 * std::f64::consts::TAU;
             let walk = (phase.sin() * 1.6).clamp(-1.0, 1.0) * 22.0 * unit;
             let facing = if phase.cos() >= 0.0 { 1.0f32 } else { -1.0 };
             let moving = (phase.sin() * 1.6).abs() < 1.0;
-            let sx = ((wx - self.cam64() * speed + walk).rem_euclid(period) - 45.0 * unit - self.off as f64) as f32;
+            let sx = (wx - self.cam64() * speed + walk - self.off as f64) as f32;
             if sx < -20.0 * u || sx > self.w as f32 + 20.0 * u {
                 continue;
             }
-            let base = self.floor_y(slot, sx.clamp(0.0, self.w as f32 - 1.0)) + 1.0;
+            let base = self.floor_y(slot, sx) + 1.0;
             let fog = self.fog_z(z);
             let col = |c: Rgb| lerp(c, bot, fog);
             let body = col([210, 84, 52]);
@@ -390,7 +446,7 @@ impl World {
             // legs, three per side, alternating while walking
             for k in 0..3 {
                 for sgn in [-1.0f32, 1.0] {
-                    let step = if moving { (self.t * 9.0 + k as f32 * 2.1 + if sgn > 0.0 { std::f32::consts::PI } else { 0.0 }).sin() } else { 0.0 };
+                    let step = if moving { (self.t * 4.5 + k as f32 * 2.1 + if sgn > 0.0 { std::f32::consts::PI } else { 0.0 }).sin() } else { 0.0 };
                     let root = (cx + sgn * (0.7 + 0.5 * k as f32) * u * 0.7, cy + 0.2 * u);
                     let foot = (root.0 + sgn * (1.3 + step * 0.5) * u * 0.7, base - step.max(0.0) * 0.5 * u * 0.4);
                     thick(f, root, (root.0 + sgn * 0.8 * u * 0.7, root.1 - 0.5 * u * 0.4), sc, dark);
@@ -402,7 +458,7 @@ impl World {
             // claws held up in front, eyes on stalks
             for sgn in [-1.0f32, 1.0] {
                 let arm = (cx + facing * 2.0 * u * 0.75, cy - 0.2 * u + sgn * 0.0);
-                let claw = (arm.0 + facing * 1.2 * u * 0.75, arm.1 - (1.2 + sgn * 0.4 + (self.t * 3.0 + sgn).sin() * 0.3) * u * 0.75);
+                let claw = (arm.0 + facing * 1.2 * u * 0.75, arm.1 - (1.2 + sgn * 0.4 + (self.t * 1.5 + sgn).sin() * 0.3) * u * 0.75);
                 thick(f, arm, claw, sc, body);
                 disc(f, claw.0, claw.1, 0.9 * u * 0.6, 0.7 * u * 0.6, body);
                 let eye = (cx + facing * (0.6 + sgn * 0.5) * u * 0.75, cy - 1.7 * u * 0.75);
@@ -449,13 +505,13 @@ impl World {
         // Caustics: bright net on the sand while the sun reaches it.
         let strength = (1.0 - self.zf / 1.6).max(0.0) * if near { 1.0 } else { 0.0 };
         if strength > 0.02 && slot <= 1 {
-            let tx: Vec<f32> = (0..self.w).map(|x| ((x as f32 + self.off) * 0.055 / sc as f32 + self.t * 0.6).sin()).collect();
-            let tx2: Vec<f32> = (0..self.w).map(|x| ((x as f32 + self.off) * 0.083 / sc as f32 - self.t * 0.45 + 1.3).sin()).collect();
+            let tx: Vec<f32> = (0..self.w).map(|x| ((x as f32 + self.off) * 0.055 / sc as f32 + self.t * 0.3).sin()).collect();
+            let tx2: Vec<f32> = (0..self.w).map(|x| ((x as f32 + self.off) * 0.083 / sc as f32 - self.t * 0.225 + 1.3).sin()).collect();
             for x in 0..self.w {
                 let fy = (floor[x] as i32).max(0);
                 for y in fy..self.h as i32 {
-                    let ty = (y as f32 * 0.07 / sc as f32 + self.t * 0.35).sin();
-                    let ty2 = (y as f32 * 0.11 / sc as f32 - self.t * 0.5).sin();
+                    let ty = (y as f32 * 0.07 / sc as f32 + self.t * 0.175).sin();
+                    let ty2 = (y as f32 * 0.11 / sc as f32 - self.t * 0.25).sin();
                     let g = (tx[x] * ty + tx2[x] * ty2).abs();
                     if g < 0.22 {
                         f.blend(x as i32, y, [255, 252, 220], (1.0 - g / 0.22) * 0.3 * strength);
@@ -463,6 +519,15 @@ impl World {
                 }
             }
         }
+    }
+
+    /// The same wave height drives the bright surface and anything floating on it.
+    fn surface_height(&self, panorama_x: f32) -> f32 {
+        let sc = self.px_scale as f32;
+        let waves = if self.journey.is_some() { (self.sea.wave_m / 0.8).clamp(0.6, 3.0) } else { 1.0 };
+        sc * (1.5 + 1.2 * waves)
+            + ((panorama_x * 0.03 + self.t * 0.9).sin()
+                + 0.5 * (panorama_x * 0.071 - self.t * 1.3).sin()) * sc * waves
     }
 
     /// The water surface seen from below (shallow zones): a wavy bright edge with glints.
@@ -474,7 +539,7 @@ impl World {
         let sc = self.px_scale as f32;
         for x in 0..self.w {
             let gx = x as f32 + self.off;
-            let y = 1.0 + ((gx * 0.03 + self.t * 0.9).sin() + 0.5 * (gx * 0.071 - self.t * 1.3).sin()) * sc;
+            let y = self.surface_height(gx);
             for k in 0..(3.0 * sc) as i32 {
                 let a = (1.0 - k as f32 / (3.0 * sc)) * 0.55 * strength;
                 f.blend(x as i32, y as i32 + k, [235, 250, 255], a);
@@ -483,23 +548,64 @@ impl World {
                 f.dot(x as i32, y as i32 + sc as i32, self.px_scale, [255, 255, 255], 0.9 * strength);
             }
         }
+        self.draw_fishing_line(f, strength);
     }
 
-    /// Faint schools far away, drifting at the edge of visibility.
-    pub(super) fn draw_far_schools(&self, f: &mut Frame, bot: Rgb) {
-        let n = 4;
+    /// A stationary boat above the surface: its buoy lifts the line and hook with the waves.
+    fn draw_fishing_line(&self, f: &mut Frame, strength: f32) {
+        if self.tz > 2 {
+            return;
+        }
+        let fade = strength * (1.0 - self.zf / 3.2).clamp(0.0, 1.0);
+        if fade <= 0.02 {
+            return;
+        }
+        let unit = self.unit();
+        let sc = self.px_scale.max(1);
+        let visibility = 0.55 + 0.35 * (1.0 - fade);
+        let line = lerp([72, 84, 88], self.water().0, visibility);
+        let spacing = self.pano as f64 * 1.2;
+        for i in self.visible_cells(spacing, 1.0, 8.0 * unit as f64) {
+            let seed = mix(85_501, i as u64);
+            let world_x = (i as f64 + 0.35 + 0.3 * hf(seed, 1) as f64) * spacing;
+            let x = (world_x - self.cam64() - self.off as f64) as f32;
+            if x < -8.0 * unit || x > self.w as f32 + 8.0 * unit { continue; }
+            let surface_y = self.surface_height(x + self.off);
+            let drift = if self.journey.is_some() { self.sea.flow_knots as f32 * unit * 0.65 } else { 0.0 };
+            let hook_x = x + drift;
+            let end = surface_y + (19.0 + 5.0 * hf(seed, 2)) * unit;
+            // The buoy marks where the unseen boat holds the line. Both the rope and hook follow it.
+            disc(f, x, surface_y, 2.3 * unit, 1.35 * unit, lerp([226, 82, 52], self.water().0, 0.22));
+            disc(f, x - 0.45 * unit, surface_y - 0.45 * unit, 0.7 * unit, 0.45 * unit, [255, 224, 170]);
+            thick(f, (x, surface_y + unit), (hook_x, end), sc, line);
+            thick(f, (hook_x, end), (hook_x + 1.0 * unit, end + 1.3 * unit), sc, line);
+            thick(f, (hook_x + 1.0 * unit, end + 1.3 * unit), (hook_x + 1.8 * unit, end + 0.8 * unit), sc, line);
+            disc(f, hook_x, end, 0.7 * unit, 0.7 * unit, lerp([226, 168, 76], self.water().1, 0.55 + 0.3 * (1.0 - fade)));
+        }
+    }
+
+    /// Faint schools far away, projected from the lens-close cruise pace.
+    pub(super) fn far_school_x(&self, school: u64) -> f64 {
         let period = self.pano as f64 + 60.0 * self.unit() as f64;
+        let dir = if hf(school, 1) < 0.5 { 1.0 } else { -1.0 };
+        let speed = self.paths.first().map_or(0.0, |path| path.speed) * FAR_SCHOOL_PROJECTION * dir;
+        (hf(school, 3) as f64 * period + speed * self.tt).rem_euclid(period) - 30.0 * self.unit() as f64 - self.off as f64
+    }
+
+    pub(super) fn draw_far_schools(&self, f: &mut Frame, bot: Rgb) {
+        let n = 6 + if self.journey.is_some() { (self.sea.upwelling * 5.0).round() as u64 } else { 0 };
         for s in 0..n {
             let dir = if hf(s, 1) < 0.5 { 1.0 } else { -1.0 };
-            let speed = (1.5 + 2.0 * hf(s, 2)) as f64 * self.unit() as f64 * dir;
-            let cx = (hf(s, 3) as f64 * period + speed * self.tt).rem_euclid(period) - 30.0 * self.unit() as f64 - self.off as f64;
+            let cx = self.far_school_x(s);
             let cy = (0.2 + 0.35 * hf(s, 4)) * self.h as f32;
             let c = lerp([40, 70, 110], bot, 0.55 + 0.25 * (self.zf / 5.0).min(1.0));
-            for k in 0..18 {
+            let count = if s == 1 || s == 4 { 34 } else { 18 };
+            for k in 0..count {
                 // Scattered through an elongated blob, each fish with its own slow drift.
-                let (ang, rad) = (hf(s, 20 + k) * std::f32::consts::TAU, hf(s, 50 + k).powf(0.7));
-                let x = cx as f32 + (ang.cos() * rad * 11.0 + (self.t * 0.5 + ang * 3.0).sin() * 1.5) * self.unit() * 0.7;
-                let y = cy + (ang.sin() * rad * 3.5 + (self.t * 0.4 + ang * 2.0).cos() * 0.8) * self.unit() * 0.5;
+                let (ang, rad) = (hf(s, 20 + k as u64) * std::f32::consts::TAU, hf(s, 50 + k as u64).powf(0.7));
+                let spread = if count > 18 { 18.0 } else { 11.0 };
+                let x = cx as f32 + (ang.cos() * rad * spread + (self.t * 0.075 + ang * 3.0).sin() * 1.5) * self.unit() * 0.7;
+                let y = cy + (ang.sin() * rad * if count > 18 { 5.0 } else { 3.5 } + (self.t * 0.06 + ang * 2.0).cos() * 0.8) * self.unit() * 0.5;
                 f.dot(x as i32, y as i32, self.px_scale, c, 0.8);
                 f.dot(x as i32 - dir as i32 * self.px_scale, y as i32, self.px_scale, c, 0.45);
             }

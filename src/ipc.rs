@@ -86,6 +86,8 @@ pub enum Request {
     Joined,
     Wake,
     Stop,
+    CosmeticBuy(String),
+    CosmeticSelect(String),
 }
 
 struct Peer {
@@ -126,6 +128,8 @@ impl Server {
                 match m["t"].as_str() {
                     Some("wake") => out.push(Request::Wake),
                     Some("stop") => out.push(Request::Stop),
+                    Some("cosmetic_buy") => if let Some(id) = m["id"].as_str() { out.push(Request::CosmeticBuy(id.to_string())); },
+                    Some("cosmetic_select") => if let Some(id) = m["id"].as_str() { out.push(Request::CosmeticSelect(id.to_string())); },
                     _ => {}
                 }
             }
@@ -255,7 +259,7 @@ mod tests {
 
     #[test]
     fn events_round_trip() {
-        for ev in [GameEvent::LevelUp(4), GameEvent::Trophy("first_dive"), GameEvent::Discovery("angler"), GameEvent::Quest("whale")] {
+        for ev in [GameEvent::LevelUp(4), GameEvent::Trophy("first_dive"), GameEvent::Discovery("angler"), GameEvent::Quest("time15")] {
             assert_eq!(decode(&encode(&ev)), Some(ev));
         }
         assert_eq!(decode(&json!({ "kind": "trophy", "value": "nope" })), None);

@@ -8,8 +8,9 @@ BarWidget {
   id: root
   moduleName: "io.github.cesarfilho.abyss"
 
-  readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/abyss"
-  readonly property string configDir: Quickshell.env("HOME") + "/.config/abyss"
+  readonly property string homeDir: Quickshell.env("HOME")
+  readonly property string stateDir: Quickshell.env("ABYSS_STATE_DIR") || ((Quickshell.env("XDG_STATE_HOME") || homeDir + "/.local/state") + "/abyss")
+  readonly property string configDir: Quickshell.env("ABYSS_CONFIG_DIR") || ((Quickshell.env("XDG_CONFIG_HOME") || homeDir + "/.config") + "/abyss")
 
   property var stats: null
   property string mode: "abyss"
@@ -44,6 +45,11 @@ BarWidget {
     root.idleSecs = secs
     idleProcess.command = ["abyss", "idle", String(secs)]
     idleProcess.running = true
+  }
+
+  function cosmetic(action, id) {
+    cosmeticProcess.command = ["abyss", "cosmetic", action, id]
+    cosmeticProcess.running = true
   }
 
   function startNow() {
@@ -137,6 +143,7 @@ BarWidget {
   Process { id: modeProcess }
   Process { id: qualityProcess }
   Process { id: idleProcess }
+  Process { id: cosmeticProcess }
   Process { id: startProcess }
   Process {
     id: resetProcess
@@ -158,6 +165,7 @@ BarWidget {
     bar: root.bar
     text: root.mode === "abyss" ? "󰈺" : "󰹑"
     tooltipText: (root.mode === "abyss" ? "Abyss" : "Screensaver padrão")
+      + " · botão direito para alternar"
       + (root.stats ? " · nível " + root.stats.level + " · " + root.stats.depth + " m" : "")
     active: root.opened
     onPressed: function(b) {
@@ -180,6 +188,9 @@ BarWidget {
       id: keys
       anchors.fill: parent
       onCloseRequested: root.close()
+      onTabRequested: function(direction) { if (content.item) content.item.changeTab(direction) }
+      onMoveRequested: function(dx, dy) { if (content.item) content.item.moveSelection(dx, dy) }
+      onActivateRequested: if (content.item) content.item.activateSelection()
 
       // Loaded only while the panel is open, so a closed panel costs nothing.
       Loader {

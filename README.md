@@ -13,13 +13,14 @@ A gamified deep-sea screensaver for [Omarchy](https://omarchy.org/). A pixel-art
 - **A living ocean.** Six species of fish (clownfish, blue tang, sardines, lanternfish, vipers, anglers), jellyfish, whales, a **shark** whose body bends as it turns and that makes schools part around it, bubbles, marine snow and bioluminescent blooms, all drawn procedurally. Every school and loner picks its own heading and wanders; followers trail their leader, and fish tilt nose-up or nose-down as they climb or dive.
 - **A seabed worth looking at.** Five parallax planes; kelp forests, seagrass, rocks, sea fans, anemones, starfish, urchins and crabs in the shallows, tube worms and glowing sea pens in the deep; rippled sand with caustics and a rippling surface; creatures at different depths (far ones are smaller and hazier).
 - **Things on the sea floor.** Shipwreck, submarine, plane, Greek ruins, anchor, treasure chest, amphorae, a whale skeleton, hydrothermal vents and, in the abyssal zone, a broken ocean liner. Each one is a discovery.
-- **Several monitors, one sea.** The monitors form a single panorama: a fish that leaves one screen enters the next.
-- **Progression.** Every idle minute earns XP. Levels take you down through six zones (Surface, Sunlight, Twilight, Midnight, Abyssal, Hadal) that unlock new species. The reef grows while you are away and wilts if you stay away for days.
-- **Bestiary and quests.** Twenty creatures and sights to discover (the first sighting of each is a banner and points) and three new daily quests.
-- **22 trophies**, streaks and points. Every achievement is a banner over the scene on every monitor; waking the computer shows a summary of what happened.
-- **Seasonal events** with 1.5× XP: Jellyfish Night (Oct 24 – Nov 2), Christmas Lights (Dec 20 – Jan 2), Oceans Week (Jun 5–12).
+- **Several monitors, one sea.** Fish and seabed features cross between screens in one panorama. Each run visits one of 12 regions inspired by real ocean currents. Its regional current moves the camera steadily while the simulated tide oscillates over 12 h 25 min. Rocks, coral and landmarks keep stable world positions.
+- **Sea conditions in the HUD.** An eight-point compass shows the combined current and tide. The panel shows region, speed and tidal phase, alternating wind/waves/visibility with temperature/salinity/pressure. Wind and waves affect the surface; currents move the panorama and particles; occasional upwelling and storms change colour, light, schools and visibility. All values are illustrative simulation values, not local measurements or forecasts.
+- **Progression.** Active time earns fixed XP at 0.1 XP/s (6 XP/min), regardless of zone, streak or seasonal event. The current quadratic level curve reaches Hadal after about 31.25 active hours. The reef loses one coral per day after three days away; streaks restart after a missed day.
+- **Bestiary and quests.** Twenty creatures and sights to discover (the first sighting of each is a banner and points) and three daily time goals, including 15 minutes active today. Progress is saved across sessions and never depends on random sightings.
+- **22 trophies, streaks and points.** Earn one point per active minute plus mission, trophy and discovery rewards. Spend points on three cosmetic palettes (300, 900 and 1,800 points); they do not affect gameplay.
+- **Seasonal events** change the visuals and keep their trophies: Jellyfish Night (Oct 24 – Nov 2), Christmas Lights (Dec 20 – Jan 2), Oceans Week (Jun 5–12). They do not change XP.
 - **Follows your Omarchy theme.** Water, plankton glow and HUD colours lean toward the active theme (`palette: "classic"` turns it off).
-- **Light on the machine.** About 11–18 % of one core at 30 fps on a 1080p screen, half that at 15 fps; drawing pauses while the monitor sleeps and drops to 15 fps on battery.
+- **Adapts to the display.** Drawing pauses while the monitor sleeps and uses a lower frame rate on battery; resolution and frame rates are configurable.
 
 ## Gallery
 
@@ -33,9 +34,7 @@ A gamified deep-sea screensaver for [Omarchy](https://omarchy.org/). A pixel-art
 
 ### The shell plugin
 
-A bar icon opens a tabbed panel with your level, depth, activity of the last 14 days, quests, bestiary and trophies. Its settings tab can start the screensaver immediately, choose the idle delay, switch between Abyss and the stock Omarchy screensaver, select the resolution, or clear progress after confirmation. Right-click the icon to switch screensavers.
-
-<p align="center"><img src="docs/screenshots/panel.png" alt="The stats panel" width="340"></p>
+A bar icon opens a five-tab panel for your level, depth, activity, quests, bestiary, trophies, cosmetic palettes and settings. Tab switches sections; arrow keys move through the bestiary and trophy grids; Enter opens an entry's description and discovery or unlock progress. Settings include a clear choice of which screensaver starts while idle, the idle delay, resolution, an immediate start action and a confirmed progress reset. The icon tooltip shows the active mode and explains that right-click switches modes.
 
 ## Requirements
 
@@ -56,6 +55,8 @@ cd ~/.config/omarchy/plugins/io.github.cesarfilho.abyss
 ```
 
 The first command adds the plugin (the whole repository is cloned into the plugin folder). `./install.sh` builds the program and installs `abyss`, `abyss-launch`, `abyss-screensaver` and `abyss-setup` into `~/.local/bin`; `--setup` also wires Abyss into Omarchy (below). After `omarchy plugin update`, run `./install.sh` again to rebuild the program.
+
+`install.sh` and `uninstall.sh` honor `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME`. Executables use `ABYSS_BIN_DIR` when set and `~/.local/bin` otherwise; add a custom bin directory to `PATH` so the shell can find the commands.
 
 ### From a clone
 
@@ -90,7 +91,7 @@ omarchy plugin remove io.github.cesarfilho.abyss      # removes the plugin folde
 ./uninstall.sh                                        # from a clone: also deletes the program (add --purge to delete your progress)
 ```
 
-Your progress in `~/.local/state/abyss` and settings in `~/.config/abyss` are kept unless you pass `--purge`.
+Your progress in `$ABYSS_STATE_DIR`, `$XDG_STATE_HOME/abyss` or `~/.local/state/abyss`, and settings in `$ABYSS_CONFIG_DIR`, `$XDG_CONFIG_HOME/abyss` or `~/.config/abyss`, are kept unless you pass `--purge`.
 
 ## Usage
 
@@ -106,15 +107,17 @@ abyss wake                                                # end it, showing the 
 abyss stop                                                # end it without the summary
 abyss doctor [--fix]                                      # check the install; --fix cleans up after a crash
 abyss config                                              # print the active configuration
-abyss snapshot [zone 0-5] [reef 0-30] [--ppm FILE] [--t SECONDS] [--size WxH] [--season ID] [--landmark ID]
+abyss snapshot [zone 0-5] [reef 0-30] [--ppm FILE] [--t SECONDS] [--size WxH] [--season ID] [--landmark ID] [--region ID]
                                                           # render one frame (ANSI, or a PPM image without touching the screen)
 ```
 
 Any key closes the screensaver. In the bar, click the icon for the stats; right-click switches between Abyss and the stock screensaver.
 
+`--region` fixes the current in a snapshot: `gulf-stream`, `labrador`, `brazil`, `benguela`, `kuroshio`, `oyashio`, `california`, `humboldt`, `agulhas`, `west-australian`, `east-australian` or `antarctic`. Without it, snapshots retain the previous scene for comparison.
+
 ### Configuration
 
-`~/.config/abyss/config.json` (created on first use; the panel and the CLI both edit it):
+`$ABYSS_CONFIG_DIR/config.json` when set, otherwise `$XDG_CONFIG_HOME/abyss/config.json` or `~/.config/abyss/config.json` (created on first use; the panel and the CLI both edit it):
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -123,14 +126,14 @@ Any key closes the screensaver. In the bar, click the icon for the stats; right-
 | `fps` | `30` | frame rate on AC power |
 | `battery_fps` | `15` | frame rate while discharging |
 | `palette` | `"theme"` | `"theme"` follows the Omarchy theme, `"classic"` keeps the original colours |
-| `seasons` | `true` | seasonal events and their XP bonus |
+| `seasons` | `true` | seasonal visuals and trophies |
 | `idle_secs` | `150` | inactivity in seconds before the plugin starts the screensaver (10–7200) |
 
 ### Data
 
-Progress lives in `~/.local/state/abyss/` (`save.json`, `stats.json`, `last_session.json`, `crash.log`). `save.json` carries a schema version and is migrated when it changes; a file that cannot be read is moved aside as `save.json.corrupt-*`, never overwritten. Delete the folder to start again at level 0.
+Progress lives in `$ABYSS_STATE_DIR` when set, otherwise in `$XDG_STATE_HOME/abyss/` or `~/.local/state/abyss/` (`save.json`, `stats.json`, `last_session.json`, `crash.log`). `save.json` carries a schema version and is migrated when it changes; a file that cannot be read is moved aside as `save.json.corrupt-*`, never overwritten. Delete the folder to start again at level 0.
 
-Environment knobs for testing: `ABYSS_XP_MULT=300` (faster XP), `ABYSS_SEASON=halloween|xmas|oceans` (force an event), `ABYSS_STATE_DIR`, `ABYSS_CONFIG_DIR`, `ABYSS_THEME_FILE`.
+Cosmetic palettes can be managed with `abyss cosmetic buy ID` and `abyss cosmetic select ID`. Environment knobs for testing: `ABYSS_SEASON=halloween|xmas|oceans` (force an event), `ABYSS_STATE_DIR`, `ABYSS_CONFIG_DIR`, `ABYSS_THEME_FILE`.
 
 ## Troubleshooting
 

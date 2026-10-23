@@ -28,11 +28,12 @@ uso:
   abyss wake                               acorda o screensaver (mostra o resumo)
   abyss stop                               encerra o screensaver sem resumo
   abyss idle [segundos]                    tempo de inatividade até iniciar o screensaver (padrão: 150)
+  abyss cosmetic buy|select ID             compra ou seleciona uma paleta cosmética
   abyss start                              inicia o screensaver agora
   abyss reset                              apaga estatísticas, XP e conquistas
   abyss doctor [--fix]                     confere a instalação (e limpa restos de uma falha)
   abyss config                             mostra a configuração (~/.config/abyss/config.json)
-  abyss snapshot [zona 0-5] [reef 0-30] [--ppm ARQ] [--t SEG] [--size LxA] [--season ID] [--landmark ID]
+  abyss snapshot [zona 0-5] [reef 0-30] [--ppm ARQ] [--t SEG] [--size LxA] [--season ID] [--landmark ID] [--region ID]
                                            desenha um quadro (ANSI, ou imagem PPM sem tocar a tela)";
 
 fn status_json() {
@@ -88,6 +89,26 @@ fn reset() {
     println!("estatísticas e conquistas apagadas");
 }
 
+fn cosmetic(args: &[String]) {
+    let (Some(action), Some(id)) = (args.first().map(String::as_str), args.get(1)) else {
+        eprintln!("uso: abyss cosmetic buy|select ID");
+        return;
+    };
+    let req = match action {
+        "buy" => serde_json::json!({ "t": "cosmetic_buy", "id": id }),
+        "select" => serde_json::json!({ "t": "cosmetic_select", "id": id }),
+        _ => { eprintln!("ação inválida"); return; }
+    };
+    if !ipc::send_once(&ipc::sock_path(), &req) {
+        let mut save = Save::load();
+        let changed = match action { "buy" => save.buy_cosmetic(id), "select" => save.select_cosmetic(id), _ => false };
+        if changed { save.store(); }
+        println!("{}", if changed { "ok" } else { "indisponível: saldo insuficiente ou paleta bloqueada" });
+    } else {
+        println!("pedido enviado");
+    }
+}
+
 fn status() {
     let s = Save::load();
     let l = s.level();
@@ -108,7 +129,7 @@ fn status() {
         }
     }
     if let Some(se) = state::season_at(s.last_day) {
-        println!("\nEvento: {} (XP ×{})", se.name, state::SEASON_XP_BOOST);
+        println!("\nEvento visual: {}", se.name);
     }
     println!("\nTroféus {}/{}", s.trophies.len(), TROPHIES.len());
     for t in TROPHIES {
@@ -116,7 +137,7 @@ fn status() {
     }
 }
 
-/// `abyss snapshot [zone] [reef] [--ppm FILE] [--t SECONDS] [--size WxH] [--season ID]`: renders one
+/// `abyss snapshot [zone] [reef] [--ppm FILE] [--t SECONDS] [--size WxH] [--season ID] [--region ID]`: renders one
 /// frame without a terminal. Without `--ppm` it prints the frame as ANSI; with it, a PPM image
 /// (convert with `magick FILE out.png`), which never touches the screen.
 fn snapshot(args: &[String]) {
@@ -148,6 +169,12 @@ fn snapshot(args: &[String]) {
         _ => (280, 160),
     };
     let mut world = world::World::new(w, h, world::Layout::single(w), zone, reef, false).at(t);
+    let depths = [0.0, 50.0, 200.0, 1000.0, 4000.0, 6000.0, 11000.0];
+    let zi = (zone.floor() as usize).min(5);
+    world.set_depth((depths[zi] + (depths[zi + 1] - depths[zi]) * (zone - zi as f32).clamp(0.0, 1.0) as f64) as u32);
+    if let Some(region) = opt("--region").and_then(|id| world::region_by_id(&id)) {
+        world.set_journey(region, (t / 3600.0).floor() * 3600.0);
+    }
     world.set_palette(theme::Palette::classic());
     world.set_season(season);
     if let Some(id) = opt("--landmark") {
@@ -199,6 +226,7 @@ fn main() -> std::io::Result<()> {
             idle(&args[1..]);
             Ok(())
         }
+        Some("cosmetic") => { cosmetic(&args[1..]); Ok(()) }
         Some("start") => {
             let _ = std::process::Command::new("abyss-screensaver").spawn();
             Ok(())

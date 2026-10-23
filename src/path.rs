@@ -18,6 +18,7 @@ const VY_K: f64 = 0.45;
 const CONE: f64 = 65.0 * TAU / 360.0;
 
 pub struct Path {
+    pub(crate) speed: f64,
     x: Vec<f64>,
     u: Vec<f64>,
     dx: f64,
@@ -71,7 +72,7 @@ impl Path {
             ax += s * theta.cos() * STEP;
             au += s * VY_K * theta.sin() * STEP;
         }
-        Self { x, u, dx: ax, du: au, x0, t0, ymid, r: r.max(1.0) }
+        Self { speed, x, u, dx: ax, du: au, x0, t0, ymid, r: r.max(1.0) }
     }
 
     /// Position at wall-clock time `t`: x is unbounded (wrap it into the panorama), y is within the band.

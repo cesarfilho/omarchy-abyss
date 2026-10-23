@@ -10,15 +10,17 @@ Item {
   id: root
 
   property var shell: null
+  readonly property string homeDir: Quickshell.env("HOME")
+  readonly property string configDir: Quickshell.env("ABYSS_CONFIG_DIR") || ((Quickshell.env("XDG_CONFIG_HOME") || homeDir + "/.config") + "/abyss")
 
-  // `abyss idle SECONDS` (or the panel) writes this to ~/.config/abyss/config.json.
+  // `abyss idle SECONDS` (or the panel) writes this to the XDG config directory.
   property int timeoutSeconds: 150
   property bool launched: false
 
   function launch() {
     root.launched = true
     launchProcess.command = ["bash", "-lc",
-      "[[ -e \"$HOME/.local/state/omarchy/indicators/stay-awake\" ]] && exit 0; " +
+      "[[ -e \"${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/indicators/stay-awake\" ]] && exit 0; " +
       "[[ $(omarchy-shell lock isLocked 2>/dev/null) == \"true\" ]] && exit 0; " +
       "abyss-screensaver"]
     launchProcess.running = true
@@ -34,7 +36,7 @@ Item {
   }
 
   FileView {
-    path: Quickshell.env("HOME") + "/.config/abyss/config.json"
+    path: root.configDir + "/config.json"
     watchChanges: true
     printErrors: false
     onLoaded: {
